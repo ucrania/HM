@@ -7,13 +7,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
-
 #include "esp_intr_alloc.h"
-//#include "max30102.h"
 #include "driver/i2c.h"
-//#include "max30105.h"
+
 #define REG_INTR_STATUS_1 0x00
 #define REG_INTR_STATUS_2 0x01
 #define REG_INTR_ENABLE_1 0x02
@@ -70,8 +69,8 @@
 #define LED1_CURRENT 			6.2				//Red led current 0-50mA 0.2mA resolution
 #define LED2_CURRENT 			6.2				//IR  led current 0-50mA 0.2mA resolution
 
-#define INT_PIN_0     4
-#define INT_PIN_1     5
+#define INT_PIN_0     25						//RTC GPIO used for interruptions
+#define INT_PIN_1     26						//RTC GPIO used for interruptions
 #define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
 #define ESP_INTR_FLAG_DEFAULT 0
 
@@ -85,6 +84,7 @@ struct SensorData {
 void i2c_task_0(void* arg);
 void i2c_task_1(void* arg);
 void blink_task(void* arg);
+void isr_task_manager(void* arg);
 void check_ret(int ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
 esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);
@@ -162,7 +162,7 @@ static void max30102_init(i2c_port_t i2c_num){
 
 static void IRAM_ATTR gpio_isr_handler(void* arg){
 	uint32_t gpio_num = (uint32_t) arg;
-	xTaskCreate(i2c_task_1, "i2c_test_task_1", 1024 * 2, (void* ) 0, 10, NULL);
+	xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 2, (void* ) 0, 10, NULL);
 	//xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
 }
 
@@ -243,6 +243,7 @@ void i2c_task_1(void* arg)
 	printf("\tINT: 0x%02x\n",data_h);
 	double SPO2 = process_data(sensorData);
 	printf("\tSPO2: %02f%%\n",SPO2);
+	esp_light_sleep_start();
 	vTaskDelete(NULL);
 }
 
@@ -262,6 +263,15 @@ void blink_task(void* arg)
 
 }
 
+void isr_task_manager(void* arg)
+{
+	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
+	xTaskCreate(i2c_task_1, "i2c_test_task_1", 1024 * 2, (void* ) 0, 10, NULL);
+
+
+	vTaskDelete(NULL);
+
+}
 
 esp_err_t max30102_write_reg(uint8_t uch_addr, i2c_port_t i2c_num, uint8_t puch_data){
 
@@ -537,19 +547,20 @@ uint8_t get_LED2_PA(){ //IR LED CURRENT
 void intr_init(){
 	 gpio_config_t io_conf;
 	 io_conf.intr_type = GPIO_PIN_INTR_NEGEDGE;		//interrupt of falling edge
-	 io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;		//bit mask of the pins, use GPIO4/5 here
+	 io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;		//bit mask of the pins, use GPIO25/26 here
 	 io_conf.mode = GPIO_MODE_INPUT;				//set as input mode
 	 io_conf.pull_down_en = 0;						//disable pull-down mode
 	 io_conf.pull_up_en = 1;						//enable pull-up mode
 	 gpio_config(&io_conf);
 	 //gpio_set_intr_type(INT_PIN_0, GPIO_INTR_NEGEDGE);	//interrupt of falling edge
 	 //gpio_set_intr_type(INT_PIN_1, GPIO_INTR_NEGEDGE);	//interrupt of falling edge
-
-
+	 rtc_gpio_pullup_en(INT_PIN_0);
+	 rtc_gpio_pullup_en(INT_PIN_1);
 	 gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);		//install gpio isr service
-	 //gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
-	 gpio_isr_handler_add(INT_PIN_1, gpio_isr_handler, (void*) INT_PIN_1);	//hook isr handler for specific gpio pin
-	 //gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
+	 gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
+	 //gpio_isr_handler_add(INT_PIN_1, gpio_isr_handler, (void*) INT_PIN_1);	//hook isr handler for specific gpio pin
+
+	 esp_sleep_enable_ext1_wakeup(GPIO_INPUT_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW);
 }
 
 double process_data(struct SensorData sensorData[]){
@@ -588,24 +599,6 @@ void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2){
 	*mean1 = sum1/dataLength;
 	*mean2 = sum2/dataLength;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
