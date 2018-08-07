@@ -1,14 +1,9 @@
-# Example: ADC1
-
-This test code shows how to configure ADC1 and read the voltage connected to GPIO pin.
-
- 
-### ADC1 functions:
-
-ADC1_CHANNEL_6: GPIO34, voltage range [0V..1.1V], the data range [0..4095]
+# HM Project
+### MAXREFDES117 : using MAX30105 IC
+This is a small project to read the Heart beat rate (bpm) and Pulse oximetry.
 
  
-### Test:
 
-Please connect the test voltage to GPIO34
+
+
 
