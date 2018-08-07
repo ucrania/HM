@@ -1,4 +1,3 @@
-//batatas doces
 
 #include <stdio.h>
 #include <stdlib.h>
