@@ -31,6 +31,7 @@
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/freertos/include"/>
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/include"/>
 								</option>
+								<option id="gnu.c.compiler.option.preprocessor.def.symbols.2102620585" name="Defined symbols (-D)" superClass="gnu.c.compiler.option.preprocessor.def.symbols" useByScannerDiscovery="false" valueType="definedSymbols"/>
 								<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.1294881308" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
 							</tool>
 							<tool id="cdt.managedbuild.tool.gnu.cross.cpp.compiler.1504977353" name="Cross G++ Compiler" superClass="cdt.managedbuild.tool.gnu.cross.cpp.compiler">

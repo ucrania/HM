@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -36,6 +37,10 @@
 #define REG_REV_ID 0xFE
 #define REG_PART_ID 0xFF
 
+#define FIFO_A_FULL_EN		0x80
+#define PRG_RDY_EN		0x40
+#define ALC_OVF_EN		0x20
+#define PROX_INT_EN		0x10
 
 #define BLINK_GPIO 5
 #define PRINT    1
@@ -65,9 +70,10 @@
 
 #define SMP_AVE 				8				//Options: 1,2,4,8,16,32	default:4
 #define FIFO_A_FULL 			30				//Options: 17 - 32			default:17
+#define FIFO_ROLLOVER_EN 		1				//Override data in fifo after it is full
 
-#define LED1_CURRENT 			6.2				//Red led current 0-50mA 0.2mA resolution
-#define LED2_CURRENT 			6.2				//IR  led current 0-50mA 0.2mA resolution
+#define LED1_CURRENT 			10.2				//Red led current 0-50mA 0.2mA resolution
+#define LED2_CURRENT 			10.2				//IR  led current 0-50mA 0.2mA resolution
 
 #define INT_PIN_0     			34				//RTC GPIO used for interruptions
 #define INT_PIN_1     			35				//RTC GPIO used for interruptions
@@ -98,7 +104,7 @@ uint8_t get_FIFO_CONF_REG();
 uint8_t get_LED1_PA();
 uint8_t get_LED2_PA();
 void intr_init();
-double process_data(struct SensorData sensorData[]);
+double process_data(struct SensorData sensorData[],double *mean1, double *mean2);
 void struct_rms(struct SensorData sensorData[],double *rms_l1, double *rms_l2);
 void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2);
 
@@ -146,8 +152,8 @@ static void max30102_init(i2c_port_t i2c_num){
 	printf("***MAX30102 initialization***\n");
 	int ret;
 	do{
-		ret = max30102_write_reg(REG_INTR_ENABLE_1,i2c_num,0x80);	//0b1100 0000
-		max30102_write_reg(REG_INTR_ENABLE_2,i2c_num,0x00);	//Temperature interrupt
+		ret = max30102_write_reg(REG_INTR_ENABLE_1,i2c_num, PROX_INT_EN );	//0b1001 0000
+		max30102_write_reg(REG_INTR_ENABLE_2,i2c_num,0x00);		//Temperature interrupt
 		max30102_write_reg(REG_FIFO_WR_PTR,i2c_num,0x00);		//
 		max30102_write_reg(REG_OVF_COUNTER,i2c_num,0x00);		//
 		max30102_write_reg(REG_FIFO_RD_PTR,i2c_num,0x00);		//
@@ -156,7 +162,8 @@ static void max30102_init(i2c_port_t i2c_num){
 		max30102_write_reg(REG_SPO2_CONFIG,i2c_num,get_SPO2_CONF_REG());		//01 adc range + 100 samples/sec + 18  bit resolution
 		max30102_write_reg(REG_LED1_PA,i2c_num,get_LED1_PA());			//RED LED current
 		max30102_write_reg(REG_LED2_PA,i2c_num,get_LED2_PA());			//IR  LED current
-		max30102_write_reg(REG_PILOT_PA,i2c_num,0x7f);		//Multimode registers (not used)
+		max30102_write_reg(REG_PILOT_PA,i2c_num,get_LED1_PA());		//Multimode registers (not used)
+		max30102_write_reg(REG_PROX_INT_THRESH,i2c_num,0xa0);
 	}while(ret != ESP_OK);
 }
 
@@ -174,6 +181,7 @@ void app_main()
 		i2c_init(I2C_NUM_1);
 		max30102_reset(I2C_NUM_1);
 		max30102_init(I2C_NUM_1);
+		esp_light_sleep_start();
 		//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
 
 
@@ -231,14 +239,18 @@ void i2c_task_0(void* arg)
 }
 
 void i2c_task_1(void* arg)
-{
-	printf("\tStart i2c_task_1!\n");
+{	double mean1, mean2;
+	printf("Start i2c_task_1!\n");
 	struct SensorData sensorData[FIFO_A_FULL],processed_data[FIFO_A_FULL];
 	max30102_read_fifo(I2C_NUM_1, sensorData);
 	//memcpy(processed_data,sensorData,sizeof(sensorData));
 
-	double SPO2 = process_data(sensorData);
-	fprintf(stdout,"\tSPO2: %02f%%\n",SPO2);
+	double SPO2 = process_data(sensorData,&mean1,&mean2);
+	//printf("Mean:\t%f,\t%f\n",mean1,mean2);
+	fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
+	if(mean1<120000 && mean2<120000){
+		max30102_write_reg(REG_INTR_ENABLE_1,I2C_NUM_1, PROX_INT_EN);
+	}
 	esp_light_sleep_start();
 	vTaskDelete(NULL);
 }
@@ -261,6 +273,7 @@ void blink_task(void* arg)
 
 void isr_task_manager(void* arg)
 {
+	printf("********** ISR_TASK_MANAGER **********\n\n");
 	uint8_t data=0x00;
 	i2c_port_t port;
 	if (arg == INT_PIN_0){
@@ -269,14 +282,19 @@ void isr_task_manager(void* arg)
 		port = I2C_NUM_0;
 	}
 	max30102_read_reg(REG_INTR_STATUS_1,port,&data);
-	printf("\tINT Reason: 0x%02x\n",data);
-	bool fifo_a_full_int = data>>8;
-	bool prox_int = data>>8;
+	printf("\tINT Reason: 0x%02x\t",data);
+	bool fifo_a_full_int = data>>7 & 0x01;
+	bool prox_int = data>>4 & 0x01;
+	bool alc_ovf = data>>5 & 0x01;
+	fifo_a_full_int ? printf("\tFIFO A FULL:\n") : NULL;
+	prox_int 		? printf("\tPROX INT:\n") : NULL;
+	if (prox_int){
+		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000
+	}
 
-	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
-	xTaskCreate(i2c_task_1, "i2c_test_task_1", 1024 * 2, (void* ) 0, 10, NULL);
 
-
+	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
+	xTaskCreate(i2c_task_1, "i2c_task_1", 1024 * 4, (void* ) 0, 10, NULL);	//4kB stack size
 	vTaskDelete(NULL);
 
 }
@@ -356,13 +374,15 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FI
 		i2c_master_read_byte(cmd, &LED_2[i][1], ACK_VAL);
 		i2c_master_read_byte(cmd, &LED_2[i][2], i==FIFO_A_FULL-1? NACK_VAL: ACK_VAL);	//NACK_VAL on the last iteration
 	}
+
 	i2c_master_stop(cmd);
 	ret = i2c_master_cmd_begin(i2c_num, cmd, 100 / portTICK_RATE_MS);
 	i2c_cmd_link_delete(cmd);
-
+	uint8_t data=0x00;
 	for(int i=0; i < FIFO_A_FULL; i++){
-		sensorData[i].LED_1 = (((LED_1[i][0] && 0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//TODO rever se faz bem as contas
-		sensorData[i].LED_2 = (((LED_2[i][0] && 0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//
+		sensorData[i].LED_1 = (((LED_1[i][0] &  0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//TODO rever se faz bem as contas
+		sensorData[i].LED_2 = (((LED_2[i][0] &  0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//
+		//printf("\t%x %x %x\n",LED_1[i][0]&0x03,LED_1[i][1],LED_1[i][2]);
 		fprintf(stdout,"%d, %d\n",sensorData[i].LED_1 ,sensorData[i].LED_2);
 	}
 
@@ -515,9 +535,9 @@ uint8_t get_FIFO_CONF_REG(){
 	fifo_rollover_en = FIFO_ROLLOVER_EN;
 
 #ifndef FIFO_A_FULL
-#define FIFO_A_FULL 17
+#define FIFO_A_FULL 30
 #endif
-	fifo_a_full = 32-FIFO_A_FULL;
+	fifo_a_full = FIFO_A_FULL >32 ? 2: 32-FIFO_A_FULL;
 
 	//printf("REGISTER is: 0x%x\n",smp_ave<<5 | fifo_rollover_en<<4 | fifo_a_full);
 	return smp_ave<<5 | fifo_rollover_en<<4 | fifo_a_full;
@@ -572,7 +592,7 @@ void intr_init(){
 	 esp_sleep_enable_ext1_wakeup(GPIO_INPUT_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW);
 }
 
-double process_data(struct SensorData sensorData[]){
+double process_data(struct SensorData sensorData[],double *mean1, double *mean2){
 	double rms1, rms2, dc1, dc2, R,SPO2;
 	struct_rms(sensorData,&rms1,&rms2);
 	struct_mean(sensorData,&dc1,&dc2);
@@ -582,6 +602,8 @@ double process_data(struct SensorData sensorData[]){
 	//printf("\tVALOR DC: %f e %f\n",dc1,dc2);
 	//printf("\tVALOR R: %f \n",R);
 	//printf("\tVALOR SPO2: %f \n",SPO2);
+	*mean1 = dc1;
+	*mean2 = dc2;
 	return SPO2;
 }
 
