@@ -72,15 +72,15 @@
 #define FIFO_A_FULL 			30				//Options: 17 - 32			default:17
 #define FIFO_ROLLOVER_EN 		1				//Override data in fifo after it is full
 
-#define LED1_CURRENT 			10.2				//Red led current 0-50mA 0.2mA resolution
-#define LED2_CURRENT 			10.2				//IR  led current 0-50mA 0.2mA resolution
+#define LED1_CURRENT 			8.2				//Red led current 0-50mA 0.2mA resolution
+#define LED2_CURRENT 			8.2				//IR  led current 0-50mA 0.2mA resolution
 
 #define INT_PIN_0     			34				//RTC GPIO used for interruptions
 #define INT_PIN_1     			35				//RTC GPIO used for interruptions
 #define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
 #define ESP_INTR_FLAG_DEFAULT 0
 
-#define MY_LER_FIFO
+#define PLOT
 
 struct SensorData {
 	int LED_1;	//RED
@@ -163,7 +163,7 @@ static void max30102_init(i2c_port_t i2c_num){
 		max30102_write_reg(REG_LED1_PA,i2c_num,get_LED1_PA());			//RED LED current
 		max30102_write_reg(REG_LED2_PA,i2c_num,get_LED2_PA());			//IR  LED current
 		max30102_write_reg(REG_PILOT_PA,i2c_num,get_LED1_PA());		//Multimode registers (not used)
-		max30102_write_reg(REG_PROX_INT_THRESH,i2c_num,0xa0);
+		max30102_write_reg(REG_PROX_INT_THRESH,i2c_num,0x80);
 	}while(ret != ESP_OK);
 }
 
@@ -183,37 +183,6 @@ void app_main()
 		max30102_init(I2C_NUM_1);
 		esp_light_sleep_start();
 		//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
-
-
-#ifdef MY_LER_FIFO
-
-		uint32_t io_num;
-		/*while(1){
-			maxim_max30102_read_fifo(I2C_NUM_1, &sensorData);
-
-		}*/
-
-#endif
-
-#ifdef MY_LED_TEST
-		int k = 0;
-		while (1){
-		printf("Valor: %02x\n",valor);
-		max30102_write_reg(REG_LED1_PA,I2C_NUM_1,valor);		//RED Led
-		max30102_write_reg(REG_LED2_PA,I2C_NUM_1,valor);	//IR Led
-		valor+=k;
-		if (valor+(1*k) == 0xdf)
-			k=-1;
-		else if(valor+(1*k) == 0x00){
-			k=1;
-		}
-		//max30102_shutdown();
-
-		//maxim_max30102_read_reg(REG_LED1_PA,I2C_NUM_1, data_h);
-		//vTaskDelay(pdMS_TO_TICKS(1000));
-		}
-#endif
-
 		//xTaskCreate(i2c_task_1, "i2c_test_task_1", 1024 * 2, (void* ) 0, 10, NULL);
 		//xTaskCreate(blink_task, "blink_task"	 , 1024 * 2, (void* ) 0, 10, NULL);
 }
@@ -240,15 +209,17 @@ void i2c_task_0(void* arg)
 
 void i2c_task_1(void* arg)
 {	double mean1, mean2;
-	printf("Start i2c_task_1!\n");
+#ifndef PLOT
+printf("Start i2c_task_1!\n");
+#endif
 	struct SensorData sensorData[FIFO_A_FULL],processed_data[FIFO_A_FULL];
 	max30102_read_fifo(I2C_NUM_1, sensorData);
 	//memcpy(processed_data,sensorData,sizeof(sensorData));
 
 	double SPO2 = process_data(sensorData,&mean1,&mean2);
 	//printf("Mean:\t%f,\t%f\n",mean1,mean2);
-	fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
-	if(mean1<120000 && mean2<120000){
+	//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
+	if(mean1<90000 && mean2<90000){
 		max30102_write_reg(REG_INTR_ENABLE_1,I2C_NUM_1, PROX_INT_EN);
 	}
 	esp_light_sleep_start();
@@ -273,7 +244,7 @@ void blink_task(void* arg)
 
 void isr_task_manager(void* arg)
 {
-	printf("********** ISR_TASK_MANAGER **********\n\n");
+	//printf("********** ISR_TASK_MANAGER **********\n\n");
 	uint8_t data=0x00;
 	i2c_port_t port;
 	if (arg == INT_PIN_0){
@@ -282,12 +253,15 @@ void isr_task_manager(void* arg)
 		port = I2C_NUM_0;
 	}
 	max30102_read_reg(REG_INTR_STATUS_1,port,&data);
-	printf("\tINT Reason: 0x%02x\t",data);
+
 	bool fifo_a_full_int = data>>7 & 0x01;
 	bool prox_int = data>>4 & 0x01;
 	bool alc_ovf = data>>5 & 0x01;
-	fifo_a_full_int ? printf("\tFIFO A FULL:\n") : NULL;
-	prox_int 		? printf("\tPROX INT:\n") : NULL;
+#ifndef PLOT
+	printf("\tINT Reason: 0x%02x\t",data);
+	fifo_a_full_int ? printf("\tFIFO A FULL\n") : NULL;
+	prox_int 		? printf("\tPROX INT\n") : NULL;
+#endif
 	if (prox_int){
 		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000
 	}
@@ -343,10 +317,10 @@ esp_err_t max30102_read_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data_h
 	    return ret;
 }
 
-esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FIFO_A_FULL])
+esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FIFO_A_FULL/2])
 {
 
-	uint8_t LED_1[FIFO_A_FULL][3],LED_2[FIFO_A_FULL][3];
+	uint8_t LED_1[FIFO_A_FULL/2][3],LED_2[FIFO_A_FULL/2][3];
 
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 	i2c_master_start(cmd);
@@ -365,21 +339,21 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FI
 	i2c_master_start(cmd);
 	i2c_master_write_byte(cmd, MAXREFDES117_ADDR << 1 | READ_BIT, ACK_CHECK_EN);
 
-	for(int i=0; i < FIFO_A_FULL; i++){
+	for(int i=0; i < FIFO_A_FULL/2; i++){//TODO modificar para ler metade das cenas
 		i2c_master_read_byte(cmd, &LED_1[i][0], ACK_VAL);
 		i2c_master_read_byte(cmd, &LED_1[i][1], ACK_VAL);
 		i2c_master_read_byte(cmd, &LED_1[i][2], ACK_VAL);
 
 		i2c_master_read_byte(cmd, &LED_2[i][0], ACK_VAL);
 		i2c_master_read_byte(cmd, &LED_2[i][1], ACK_VAL);
-		i2c_master_read_byte(cmd, &LED_2[i][2], i==FIFO_A_FULL-1? NACK_VAL: ACK_VAL);	//NACK_VAL on the last iteration
+		i2c_master_read_byte(cmd, &LED_2[i][2], i==FIFO_A_FULL/2-1? NACK_VAL: ACK_VAL);	//NACK_VAL on the last iteration
 	}
 
 	i2c_master_stop(cmd);
 	ret = i2c_master_cmd_begin(i2c_num, cmd, 100 / portTICK_RATE_MS);
 	i2c_cmd_link_delete(cmd);
 	uint8_t data=0x00;
-	for(int i=0; i < FIFO_A_FULL; i++){
+	for(int i=0; i < FIFO_A_FULL/2; i++){
 		sensorData[i].LED_1 = (((LED_1[i][0] &  0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//TODO rever se faz bem as contas
 		sensorData[i].LED_2 = (((LED_2[i][0] &  0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//
 		//printf("\t%x %x %x\n",LED_1[i][0]&0x03,LED_1[i][1],LED_1[i][2]);
@@ -608,7 +582,7 @@ double process_data(struct SensorData sensorData[],double *mean1, double *mean2)
 }
 
 void struct_rms(struct SensorData sensorData[],double *rms_1, double *rms_2){
-	double dataLength = FIFO_A_FULL;
+	double dataLength = FIFO_A_FULL/2;
 	double sum_led1=0 , sum_led2 =0;
 	for (int i = 0; i < dataLength; ++i) {
 		sum_led1 +=(sensorData[i].LED_1)^2;
@@ -621,7 +595,7 @@ void struct_rms(struct SensorData sensorData[],double *rms_1, double *rms_2){
 }
 
 void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2){
-	double dataLength = FIFO_A_FULL;
+	double dataLength = FIFO_A_FULL/2;
 	double sum1=0 ,sum2=0 ;
 	for (int i = 0; i < dataLength; ++i) {
 		sum1 += sensorData[i].LED_1;
