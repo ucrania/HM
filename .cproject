@@ -30,17 +30,29 @@
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/esp_adc_cal/include"/>
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/freertos/include"/>
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/include"/>
+									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/koval"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid/api/"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid/api/include/"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/log/include"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/nvs_flash/include"/>
 								</option>
-								<option id="gnu.c.compiler.option.preprocessor.def.symbols.2102620585" name="Defined symbols (-D)" superClass="gnu.c.compiler.option.preprocessor.def.symbols" useByScannerDiscovery="false" valueType="definedSymbols"/>
+								<option id="gnu.c.compiler.option.preprocessor.def.symbols.2102620585" name="Defined symbols (-D)" superClass="gnu.c.compiler.option.preprocessor.def.symbols" useByScannerDiscovery="false"/>
 								<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.1294881308" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
 							</tool>
 							<tool id="cdt.managedbuild.tool.gnu.cross.cpp.compiler.1504977353" name="Cross G++ Compiler" superClass="cdt.managedbuild.tool.gnu.cross.cpp.compiler">
+								<option id="gnu.cpp.compiler.option.include.paths.1428970215" name="Include paths (-I)" superClass="gnu.cpp.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
+									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM"/>
+									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM/build/max30102"/>
+								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.142896415" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
 							</tool>
 							<tool id="cdt.managedbuild.tool.gnu.cross.c.linker.1898276410" name="Cross GCC Linker" superClass="cdt.managedbuild.tool.gnu.cross.c.linker"/>
 							<tool id="cdt.managedbuild.tool.gnu.cross.cpp.linker.1595160250" name="Cross G++ Linker" superClass="cdt.managedbuild.tool.gnu.cross.cpp.linker">
 								<option id="gnu.cpp.link.option.paths.1931161805" name="Library search path (-L)" superClass="gnu.cpp.link.option.paths" valueType="libPaths">
 									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components"/>
+									<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.linker.input.2113913707" superClass="cdt.managedbuild.tool.gnu.cpp.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
@@ -53,6 +65,25 @@
 							</tool>
 						</toolChain>
 					</folderInfo>
+					<fileInfo id="cdt.managedbuild.toolchain.gnu.cross.base.1769849276.1098988156" name="HM.c" rcbsApplicability="disable" resourcePath="main/HM.c" toolsToInvoke="cdt.managedbuild.tool.gnu.cross.c.compiler.2070945748.1444796673">
+						<tool id="cdt.managedbuild.tool.gnu.cross.c.compiler.2070945748.1444796673" name="Cross GCC Compiler" superClass="cdt.managedbuild.tool.gnu.cross.c.compiler.2070945748">
+							<option id="gnu.c.compiler.option.include.paths.1553669747" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" valueType="includePath">
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/esp32/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/xtensa-esp32-elf/xtensa-esp32-elf/include/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/freertos/include/freertos"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/driver/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/esp_adc_cal/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/freertos/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/include"/>
+								<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/koval"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid/api/"/>
+								<listOptionValue builtIn="false" value="/home/pi/esp/esp-idf/components/bt/bluedroid/api/include/api"/>
+							</option>
+							<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.905085152" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
+						</tool>
+					</fileInfo>
 				</configuration>
 			</storageModule>
 			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
@@ -63,18 +94,6 @@
 		<project id="HM.null.1729793462" name="HM"/>
 	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
-	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets">
-		<buildTargets>
-			<target name="flash" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
-				<buildCommand>make</buildCommand>
-				<buildArguments/>
-				<buildTarget>flash</buildTarget>
-				<stopOnError>true</stopOnError>
-				<useDefaultCommand>true</useDefaultCommand>
-				<runAllBuilders>true</runAllBuilders>
-			</target>
-		</buildTargets>
-	</storageModule>
 	<storageModule moduleId="refreshScope" versionNumber="2">
 		<configuration configurationName="Default">
 			<resource resourceType="PROJECT" workspacePath="/HM"/>
@@ -95,5 +114,49 @@
 		<scannerConfigBuildInfo instanceId="cdt.managedbuild.toolchain.gnu.cross.base.1412887309;cdt.managedbuild.toolchain.gnu.cross.base.1412887309.1275276359;cdt.managedbuild.tool.gnu.cross.c.compiler.95551694;cdt.managedbuild.tool.gnu.c.compiler.input.603033854">
 			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
 		</scannerConfigBuildInfo>
+	</storageModule>
+	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets">
+		<buildTargets>
+			<target name="flash" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>make</buildCommand>
+				<buildArguments>-j8</buildArguments>
+				<buildTarget>flash</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>true</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="flash monitor" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>make</buildCommand>
+				<buildArguments>-j8</buildArguments>
+				<buildTarget>flash monitor</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>true</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="menuconfig" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>make</buildCommand>
+				<buildArguments>-j8</buildArguments>
+				<buildTarget>menuconfig</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>true</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="clean" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>make</buildCommand>
+				<buildArguments>-j8</buildArguments>
+				<buildTarget>clean</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>true</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+			<target name="all" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+				<buildCommand>make</buildCommand>
+				<buildArguments>-j8</buildArguments>
+				<buildTarget>all</buildTarget>
+				<stopOnError>true</stopOnError>
+				<useDefaultCommand>true</useDefaultCommand>
+				<runAllBuilders>true</runAllBuilders>
+			</target>
+		</buildTargets>
 	</storageModule>
 </cproject>
