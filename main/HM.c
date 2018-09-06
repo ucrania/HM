@@ -654,10 +654,17 @@ void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2){
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
-#define GATTS_SERVICE_UUID_TEST_A   0x00FF
-#define GATTS_CHAR_UUID_TEST_A      0xFF01
-#define GATTS_DESCR_UUID_TEST_A     0x3333
+#define GATTS_SERVICE_UUID_TEST_A   0x180D 	//Heart Rate Service uuid
+#define GATTS_CHAR_UUID_TEST_A      0x2A37	//Heart Rate Measurement characteristic uuid
+#define GATTS_CHAR2_UUID_TEST_A      0x2A38	//Body sensor location   characteristic uuid
+#define GATTS_DESCR_UUID_TEST_A     0x2901	//
 #define GATTS_NUM_HANDLE_TEST_A     4
+
+#define GATTS_SERVICE_UUID_TEST_B   0x1822 	//Pulse Oximeter Service uuid
+#define GATTS_CHAR_UUID_TEST_B       0x2A5E	//PLX Spot-Check Measurement characteristic uuid
+//#define GATTS_CHAR2_UUID_TEST_B      0x2A38	//Body sensor location   characteristic uuid
+#define GATTS_DESCR_UUID_TEST_B     0x2901	//
+#define GATTS_NUM_HANDLE_TEST_B     4
 
 #define TEST_MANUFACTURER_DATA_LEN  17
 
@@ -698,6 +705,15 @@ static uint8_t adv_service_uuid128[32] = {
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
 };
 
+static uint8_t heart_rate_service_uuid[48] = {
+    /* LSB <--------------------------------------------------------------------------------> MSB */
+    //first uuid, 16bit, [12],[13] is the value
+	0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
+    //second uuid, 32bit, [12], [13], [14], [15] is the value
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x37, 0x2A, 0x00, 0x00,
+	//third uuid, 32bit, [12], [13], [14], [15] is the value
+	0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x38, 0x2A, 0x00, 0x00,
+};
 // The length of adv data must be less than 31 bytes
 //static uint8_t test_manufacturer[TEST_MANUFACTURER_DATA_LEN] =  {0x12, 0x23, 0x45, 0x56};
 //adv data
@@ -707,13 +723,13 @@ static esp_ble_adv_data_t adv_data = {
     .include_txpower = true,
     .min_interval = 0x20,
     .max_interval = 0x40,
-    .appearance = 0x00,
+    .appearance = 0x0340,		//http://dev.ti.com/tirex/content/simplelink_cc2640r2_sdk_1_35_00_33/docs/blestack/ble_sw_dev_guide/doxygen/group___g_a_p___appearance___values.html#gafc2f463732a098c1b42d30a766e90a6e
     .manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
     .p_manufacturer_data =  NULL, //&test_manufacturer[0],
     .service_data_len = 0,
     .p_service_data = NULL,
-    .service_uuid_len = 32,
-    .p_service_uuid = adv_service_uuid128,
+    .service_uuid_len = sizeof(heart_rate_service_uuid),
+    .p_service_uuid = heart_rate_service_uuid,
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 // scan response data
@@ -723,33 +739,33 @@ static esp_ble_adv_data_t scan_rsp_data = {
     .include_txpower = true,
     .min_interval = 0x20,
     .max_interval = 0x40,
-    .appearance = 0x00,
+    .appearance = 0x0340,
     .manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
     .p_manufacturer_data =  NULL, //&test_manufacturer[0],
     .service_data_len = 0,
     .p_service_data = NULL,
-    .service_uuid_len = 32,
-    .p_service_uuid = adv_service_uuid128,
+    .service_uuid_len = sizeof(heart_rate_service_uuid),
+    .p_service_uuid = heart_rate_service_uuid,
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 
 
 #endif /* CONFIG_SET_RAW_ADV_DATA */
 
-
 static esp_ble_adv_params_t adv_params = {
     .adv_int_min        = 0x20,
     .adv_int_max        = 0x40,
     .adv_type           = ADV_TYPE_IND,
     .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
-    //.peer_addr            =
-    //.peer_addr_type       =
+    //.peer_addr          = {0x79, 0xdb, 0xa7, 0x91, 0x13, 0x18},
+    //.peer_addr_type     = BLE_ADDR_TYPE_PUBLIC,
     .channel_map        = ADV_CHNL_ALL,
-    .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
+    .adv_filter_policy  = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
 #define PROFILE_NUM 2
 #define PROFILE_A_APP_ID 0
+#define PROFILE_B_APP_ID 1
 
 struct gatts_profile_inst {
     esp_gatts_cb_t gatts_cb;
@@ -772,6 +788,10 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
         .gatts_cb = gatts_profile_a_event_handler,
         .gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
     },
+	[PROFILE_B_APP_ID] = {
+	        .gatts_cb = gatts_profile_a_event_handler,
+	        .gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+	},
 };
 
 typedef struct {
@@ -909,6 +929,11 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         gl_profile_tab[PROFILE_A_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
         gl_profile_tab[PROFILE_A_APP_ID].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_TEST_A;
 
+        gl_profile_tab[PROFILE_B_APP_ID].service_id.is_primary = true;
+        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.inst_id = 0x00;
+        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
+        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_TEST_B;
+
         esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(TEST_DEVICE_NAME);
         if (set_dev_name_ret){
             ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
@@ -940,17 +965,20 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
 #endif
         esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_A_APP_ID].service_id, GATTS_NUM_HANDLE_TEST_A);
+        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_B_APP_ID].service_id, GATTS_NUM_HANDLE_TEST_B);
         break;
     case ESP_GATTS_READ_EVT: {
         ESP_LOGI(GATTS_TAG, "GATT_READ_EVT, conn_id %d, trans_id %d, handle %d\n", param->read.conn_id, param->read.trans_id, param->read.handle);
         esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 4;
-        rsp.attr_value.value[0] = 0xde;
-        rsp.attr_value.value[1] = 0xed;
-        rsp.attr_value.value[2] = 0xbe;
-        rsp.attr_value.value[3] = 0xef;
+        rsp.attr_value.len = 6;
+        rsp.attr_value.value[0] = 100;
+        rsp.attr_value.value[1] = 101;
+        rsp.attr_value.value[2] = 102;
+        rsp.attr_value.value[3] = 103;
+        rsp.attr_value.value[4] = 104;
+        rsp.attr_value.value[5] = 105;
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
         break;
@@ -1021,6 +1049,12 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                         a_property,
                                                         &gatts_demo_char1_val, NULL);
+
+        /*esp_ble_gatts_add_char(gl_profile_tab[PROFILE_A_APP_ID].service_handle, GATTS_CHAR2_UUID_TEST_A,
+                                                        ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                                        a_property,
+                                                        &gatts_demo_char1_val, NULL);
+                                                        */
         if (add_char_ret){
             ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
         }
@@ -1185,7 +1219,9 @@ void bt_main(){
 	if (local_mtu_ret){
 		ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
 	}
+
 	//esp_bt_sleep_enable();
+	esp_ble_tx_power_set(9, 7);	//https://dl.espressif.com/doc/esp-idf/latest/api-reference/bluetooth/controller_vhci.html#_CPPv220esp_ble_tx_power_set20esp_ble_power_type_t17esp_power_level_t
 	return;
 }
 
