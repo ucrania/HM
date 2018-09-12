@@ -786,8 +786,8 @@ static esp_ble_adv_data_t scan_rsp_data = {
 #endif /* CONFIG_SET_RAW_ADV_DATA */
 
 static esp_ble_adv_params_t adv_params = {
-    .adv_int_min        = 0x20,
-    .adv_int_max        = 0x40,
+    .adv_int_min        = 0x0480,
+    .adv_int_max        = 0x0C80,
     .adv_type           = ADV_TYPE_IND,
     .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
     //.peer_addr          = {0x79, 0xdb, 0xa7, 0x91, 0x13, 0x18},
@@ -1081,7 +1081,6 @@ typedef struct {
 } prepare_type_env_t;
 
 static prepare_type_env_t a_prepare_write_env;
-static prepare_type_env_t b_prepare_write_env;
 
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
@@ -1396,10 +1395,20 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         }
         break;
     case ESP_GATTS_OPEN_EVT:
+    	ESP_LOGI(GATTS_TAG, "ESP_GATTS_OPEN_EVT");
+    	break;
     case ESP_GATTS_CANCEL_OPEN_EVT:
+    	ESP_LOGI(GATTS_TAG, "ESP_GATTS_CANCEL_OPEN_EVT");
+    	break;
     case ESP_GATTS_CLOSE_EVT:
+    	ESP_LOGI(GATTS_TAG, "ESP_GATTS_CLOSE_EVT");
+    	break;
     case ESP_GATTS_LISTEN_EVT:
+    	ESP_LOGI(GATTS_TAG, "ESP_GATTS_LISTEN_EVT");
+    	break;
     case ESP_GATTS_CONGEST_EVT:
+    	ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONGEST_EVT");
+    	break;
     default:
         break;
     }
