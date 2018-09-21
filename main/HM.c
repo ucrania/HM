@@ -896,6 +896,7 @@ struct gatts_profile_inst {
     uint16_t app_id;
     uint16_t conn_id;
     uint16_t service_handle;
+    uint16_t char_num;
     esp_gatt_srvc_id_t service_id;
     uint16_t char_handle;
     esp_bt_uuid_t char_uuid;
@@ -1539,18 +1540,22 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 /* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
 static struct gatts_profile_inst gl_profile_tab[] = {
 		[PROFILE_A_APP_ID] = {
+				.char_num =0,
 				.gatts_cb = gatts_profile_a_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
 		},
 		[PROFILE_B_APP_ID] = {
+				.char_num =0,
 				.gatts_cb = gatts_profile_b_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
 		},
 		[PROFILE_C_APP_ID] = {
+				.char_num =0,
 				.gatts_cb = gatts_profile_c_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
 		},
 		[PROFILE_D_APP_ID] = {
+				.char_num =0,
 				.gatts_cb = gatts_profile_d_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
 		},
@@ -1695,10 +1700,12 @@ void gatts_add_char(uint8_t profile) {
 	for (uint32_t pos2=0;pos2<GATTS_CHAR_NUM;pos2++) {
 		if (gl_char[pos2].char_handle==0) {
 			ble_add_char_pos=pos2;
-			for (uint32_t pos=pos2;pos<char_num+pos2;pos++) {
+			uint8_t pos =pos2;
+			//for (uint32_t pos=pos2;pos<char_num+pos2;pos++) {
 				ESP_LOGI(GATTS_TAG, "ADD pos %d handle %d service %d\n", pos,gl_char[pos].char_handle,gl_profile_tab[profile].service_handle);
 				esp_ble_gatts_add_char(gl_profile_tab[profile].service_handle, &gl_char[pos].char_uuid,gl_char[pos].char_perm,gl_char[pos].char_property,gl_char[pos].char_val, gl_char[pos].char_control);
-			}
+				gl_profile_tab[profile].char_num++;
+			//}
 			break;
 		}
 	}//TODO corrigir ble_add_char_pos
@@ -1727,8 +1734,8 @@ void gatts_check_add_char(esp_bt_uuid_t char_uuid, uint16_t attr_handle,uint8_t 
 			gl_char[ble_add_char_pos].char_handle=attr_handle;
 
 		}else{				//HM Service
-			gl_char[ble_add_char_pos].char_handle  =attr_handle-2;
-			gl_char[ble_add_char_pos+1].char_handle=attr_handle;
+			gl_char[ble_add_char_pos].char_handle  =attr_handle;
+			//gl_char[ble_add_char_pos+1].char_handle=attr_handle;
 		}
 
 		// is there a descriptor to add ?
@@ -1740,10 +1747,11 @@ void gatts_check_add_char(esp_bt_uuid_t char_uuid, uint16_t attr_handle,uint8_t 
 			}else{
 				esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos].descr_uuid,
 					gl_char[ble_add_char_pos].descr_perm, gl_char[ble_add_char_pos].descr_val, gl_char[ble_add_char_pos].descr_control);
-				esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos+1].descr_uuid,
-									gl_char[ble_add_char_pos+1].descr_perm, gl_char[ble_add_char_pos+1].descr_val, gl_char[ble_add_char_pos+1].descr_control);
+				//esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos+1].descr_uuid,
+					//				gl_char[ble_add_char_pos+1].descr_perm, gl_char[ble_add_char_pos+1].descr_val, gl_char[ble_add_char_pos+1].descr_control);
 			}
 		} else {
+
 			gatts_add_char(profile);
 		}
 	}
@@ -1919,8 +1927,6 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     case ESP_GATTS_ADD_INCL_SRVC_EVT:
         break;
     case ESP_GATTS_ADD_CHAR_EVT: {
-        uint16_t length = 0;
-        const uint8_t *prf_char;
 
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status 0x%X,  attr_handle %d, service_handle %d\n",
                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
@@ -1929,6 +1935,10 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         if (param->add_char.status==ESP_GATT_OK) {
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
         }
+        if (gl_profile_tab[profile].char_num < GATTS_CHAR_NUM_A) {
+        	gatts_add_char(profile);
+		}
+
         break;
     }
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
