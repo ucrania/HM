@@ -711,10 +711,10 @@ esp_gatt_char_prop_t b_property = 0;
 
 uint8_t char1_str[] = {0x11,0x11};	//Heart Rate
 uint8_t char2_str[] = {0x01}; 		//Body Location: 03 -> Finger
-uint8_t char3_str[] = {0x33,0x69};	//Pulse Measurement
+uint8_t char3_str[] = {13,69};	//Pulse Measurement
 uint8_t char4_str[] = {0x11,0x11};	//Heart Rate
 uint8_t char5_str[] = {0x02}; 		//Body Location: 03 -> Finger
-uint8_t char6_str[] = {0x33,0x70};	//Pulse Measurement
+uint8_t char6_str[] = {23,70};	//Pulse Measurement
 
 uint8_t descr1_str[] = "descr1";
 uint8_t descr2_str[] = "descr2";
