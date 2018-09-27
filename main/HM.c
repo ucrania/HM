@@ -929,23 +929,22 @@ static esp_ble_adv_params_t adv_params = {
 
 static uint32_t ble_add_char_pos;
 
-
-
 #define EN_NOTIFY_0
 #define EN_NOTIFY_1
 #define EN_NOTIFY_2
 #define EN_NOTIFY_3
 
-uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate
+//uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate
 void notify_task( void* arg) {
 #ifndef PLOT
 	printf("\tNotify TASK!\n");
+	printf("Profile %d\n", (uint8_t)arg);
 #endif
 	uint8_t descr_aux[6];
-printf("Profile %d\n", (uint8_t)arg);
+
 	switch ((int)arg) {
 	case PROFILE_A_APP_ID:
-		memcpy(descr_aux,char1_test_str,sizeof(char1_test_str));
+		memcpy(descr_aux,char1_str,sizeof(char1_str));
 		break;
 	case PROFILE_B_APP_ID:
 		memcpy(descr_aux,char2_str,sizeof(char2_str));
@@ -957,6 +956,7 @@ printf("Profile %d\n", (uint8_t)arg);
 		memcpy(descr_aux,char4_str,sizeof(char4_str));
 		break;
 	default:
+
 		break;
 	}
 
@@ -1050,7 +1050,7 @@ static struct gatts_char_inst gl_char[] = {
 		},
 		{		//PLX Spot-check measurement
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   0x2A37,
+				.char_uuid.uuid.uuid16 =   0x2A5F,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
 				.char_val = &gatts_demo_char3_val,
