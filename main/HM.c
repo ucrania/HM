@@ -695,7 +695,7 @@ void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
 void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
 #define GATTS_TAG 					"GATT_Server"
-#define TEST_DEVICE_NAME            "HM_BLE_Koval"
+#define TEST_DEVICE_NAME            "HM_BLE_Koval" /*"HM_BLE_Calil"*/
 
 #define GATTS_SERVICE_UUID_HEART_RATE   0x180D 	//Heart Rate Service uuid
 #define GATTS_CHAR_UUID_A      0x2A37	//Heart Rate Measurement characteristic uuid
@@ -932,9 +932,9 @@ static uint32_t ble_add_char_pos;
 
 
 #define EN_NOTIFY_0
-//#define EN_NOTIFY_1
-//#define EN_NOTIFY_2
-//#define EN_NOTIFY_3
+#define EN_NOTIFY_1
+#define EN_NOTIFY_2
+#define EN_NOTIFY_3
 
 uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate
 void notify_task( void* arg) {
@@ -964,6 +964,8 @@ printf("Profile %d\n", (uint8_t)arg);
 	for (int i = (int)arg*10; i < (int)arg*10 + 11; i++) { //infinite loop
 		descr_aux[1] = i % 255;
 		printf("\tSent: %d\n",descr_aux[1]);
+		printf("\tConn_id: %d\n",notify_task_data.param.write.conn_id);
+		printf("\tchar_handle: %d\n",notify_task_data.char_handle);
 		esp_ble_gatts_send_indicate(notify_task_data.gatts_if, notify_task_data.param.write.conn_id, notify_task_data.char_handle,
 				sizeof(descr_aux),descr_aux , true);
 		vTaskDelay(1000 / portTICK_RATE_MS); // delay 1s
@@ -1048,7 +1050,7 @@ static struct gatts_char_inst gl_char[] = {
 		},
 		{		//PLX Spot-check measurement
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   0x2A5F,
+				.char_uuid.uuid.uuid16 =   0x2A37,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
 				.char_val = &gatts_demo_char3_val,
@@ -1783,12 +1785,12 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
 
 void gatts_add_char(uint8_t profile) {
 
-	ESP_LOGI(GATTS_TAG, "gatts_add_char %d in profile %d\n", GATTS_CHAR_NUM_B, profile);
+	ESP_LOGI(GATTS_TAG, "gatts_add_char %d in profile %d\n", gl_profile_tab[profile].char_num, profile);
 
 	for (uint32_t pos=0;pos<GATTS_CHAR_NUM;pos++) {
 		if (gl_char[pos].char_handle==0) {
 			ble_add_char_pos=pos;
-			ESP_LOGI(GATTS_TAG, "ADD pos %d handle %d service %d\n", pos,gl_char[pos].char_handle,gl_profile_tab[profile].service_handle);
+			//ESP_LOGI(GATTS_TAG, "ADD pos %d handle %d service %d\n", pos,gl_char[pos].char_handle,gl_profile_tab[profile].service_handle);
 			esp_ble_gatts_add_char(gl_profile_tab[profile].service_handle, &gl_char[pos].char_uuid,gl_char[pos].char_perm,gl_char[pos].char_property,gl_char[pos].char_val, gl_char[pos].char_control);
 			gl_profile_tab[profile].char_num++;
 			break;
@@ -1932,7 +1934,6 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     		esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
 
     		if (gl_profile_tab[profile].descr_handle == param->write.handle && param->write.len == 2){
-    			printf("descr_handle== param->write.handle");
     			uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
     			if (descr_value == 0x0001){
     				if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
@@ -2003,9 +2004,9 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status 0x%X,  attr_handle %d, service_handle %d\n",
                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-        gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
 
         if (param->add_char.status==ESP_GATT_OK) {
+        	gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
         }
         if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
@@ -2049,7 +2050,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s", esp_err_to_name(param->conf.status));
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2175,9 +2176,10 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status 0x%X,  attr_handle %d, service_handle %d\n",
                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-        gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
+
 
         if (param->add_char.status==ESP_GATT_OK) {
+        	gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
         }
         if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
@@ -2205,7 +2207,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s",  esp_err_to_name(param->conf.status));
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d",  param->conf.status);
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2331,10 +2333,11 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     case ESP_GATTS_ADD_CHAR_EVT: {
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status 0x%X,  attr_handle %d, service_handle %d\n",
                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-        gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
+
 
         if (param->add_char.status==ESP_GATT_OK) {
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
+        	gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
         }
         if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
         	gatts_add_char(profile);
@@ -2361,7 +2364,7 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s",  esp_err_to_name(param->conf.status));
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d",  param->conf.status);
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2490,9 +2493,9 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status 0x%X,  attr_handle %d, service_handle %d\n",
                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-        gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
 
         if (param->add_char.status==ESP_GATT_OK) {
+            gl_profile_tab[profile].char_handle = param->add_char.attr_handle;
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
         }
         if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
@@ -2520,7 +2523,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s", esp_err_to_name(param->conf.status));
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
