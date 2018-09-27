@@ -107,11 +107,9 @@
 
 #define SENSOR_1 "sensor_one"
 #define SENSOR_2 "sensor_two"
-
 #define TRESHOLD_ON 40000
 #define PLOT
-#define GATTS_TAG 					"GATT_Server"
-#define TEST_DEVICE_NAME            "HM_BLE_IK"
+
 struct SensorData {
 	int LED_1;	//RED
 	int	LED_2;	//IR
@@ -120,6 +118,7 @@ struct SensorData {
 void i2c_task_0(void* arg);
 void i2c_task_1(void* arg);
 void blink_task(void* arg);
+void notify_task(void* arg);
 void isr_task_manager(void* arg);
 void check_ret(int ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
@@ -656,6 +655,13 @@ void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2){
 }
 
 /*********************BLE PART**************************************************************************************/
+static struct notify_struct {
+		esp_gatt_if_t gatts_if;
+		esp_ble_gatts_cb_param_t param;
+		uint16_t char_handle;
+}notify_task_data;
+static TaskHandle_t xHandle;
+
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
@@ -688,6 +694,8 @@ void descr5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
+#define GATTS_TAG 					"GATT_Server"
+#define TEST_DEVICE_NAME            "HM_BLE_Koval"
 
 #define GATTS_SERVICE_UUID_HEART_RATE   0x180D 	//Heart Rate Service uuid
 #define GATTS_CHAR_UUID_A      0x2A37	//Heart Rate Measurement characteristic uuid
@@ -726,24 +734,33 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 #define RR_INTERVAL_NOT_PRESENT 				0x00	//
 #define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
 
-#define CHAR1_FLAGS			HEART_RATE_8BIT  | SENSOR_CONTACT_DETECTED | ENERGY_EXPENDED_PRESENT | RR_INTERVAL_NOT_PRESENT
-#define CHAR2_FLAGS			HEART_RATE_16BIT | SENSOR_CONTACT_DETECTED | ENERGY_EXPENDED_PRESENT | RR_INTERVAL_NOT_PRESENT
-esp_gatt_char_prop_t a_property = 0;
-esp_gatt_char_prop_t b_property = 0;
+#define CHAR1_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
+#define CHAR4_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
 
-uint8_t char1_str[] = {CHAR1_FLAGS,80,13551};	//Heart Rate
+//*****Pulse oximeter FLAG defines *****//
+#define SPO2PS_FAST_PRESENT						0x01	//
+#define SPO2PS_SLOW_PRESENT						0x02	//
+#define MEASURMENT_STATUS_PRESENT 				0x04	//
+#define DEVICE_AND_SENSOR_STATUS_PRESENT		0x08	//
+#define PULSE_AMPLITUDE_INDEX_PRESENT			0x10	//
+
+#define CHAR3_FLAGS			0x0
+#define CHAR6_FLAGS			0x0
+
+uint8_t char1_str[] = {CHAR1_FLAGS,80};//,13551%255,13551>>8};	//Heart Rate
 uint8_t char2_str[] = {FINGER}; 				//Body Location:
-uint8_t char3_str[] = {13,69};					//Pulse Measurement
-uint8_t char4_str[] = {CHAR2_FLAGS,91,18500};	//Heart Rate
+uint8_t char3_str[] = {CHAR3_FLAGS,99,0,11,0};					//Pulse Measurement , value: 99 , 11-> data for testing
+uint8_t char4_str[] = {CHAR4_FLAGS,70};//,18500%255,18500>>8};	//Heart Rate
 uint8_t char5_str[] = {WRIST}; 					//Body Location:
-uint8_t char6_str[] = {23,70};					//Pulse Measurement
+uint8_t char6_str[] = {CHAR6_FLAGS,98,0,10,0};					//Pulse Measurement
 
-uint8_t descr1_str[] = "1";
-uint8_t descr2_str[] = "descr2";
-uint8_t descr3_str[] = "descr3";
-uint8_t descr4_str[] = "descr4";
-uint8_t descr5_str[] = "descr5";
-uint8_t descr6_str[] = "descr6";
+uint8_t descr1_str[] = {0,0};
+uint8_t descr2_str[] = {0,0};
+uint8_t descr3_str[] = {0,0};
+uint8_t descr4_str[] = {0,0};
+uint8_t descr5_str[] = {0,0};
+uint8_t descr6_str[] = {0,0};
+
 
 
 esp_attr_value_t gatts_demo_char1_val = {
@@ -912,6 +929,49 @@ static esp_ble_adv_params_t adv_params = {
 
 static uint32_t ble_add_char_pos;
 
+
+
+#define EN_NOTIFY_0
+//#define EN_NOTIFY_1
+//#define EN_NOTIFY_2
+//#define EN_NOTIFY_3
+
+uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate
+void notify_task( void* arg) {
+#ifndef PLOT
+	printf("\tNotify TASK!\n");
+#endif
+	uint8_t descr_aux[6];
+printf("Profile %d\n", (uint8_t)arg);
+	switch ((int)arg) {
+	case PROFILE_A_APP_ID:
+		memcpy(descr_aux,char1_test_str,sizeof(char1_test_str));
+		break;
+	case PROFILE_B_APP_ID:
+		memcpy(descr_aux,char2_str,sizeof(char2_str));
+		break;
+	case PROFILE_C_APP_ID:
+		memcpy(descr_aux,char3_str,sizeof(char3_str));
+		break;
+	case PROFILE_D_APP_ID:
+		memcpy(descr_aux,char4_str,sizeof(char4_str));
+		break;
+	default:
+		break;
+	}
+
+
+	for (int i = (int)arg*10; i < (int)arg*10 + 11; i++) { //infinite loop
+		descr_aux[1] = i % 255;
+		printf("\tSent: %d\n",descr_aux[1]);
+		esp_ble_gatts_send_indicate(notify_task_data.gatts_if, notify_task_data.param.write.conn_id, notify_task_data.char_handle,
+				sizeof(descr_aux),descr_aux , true);
+		vTaskDelay(1000 / portTICK_RATE_MS); // delay 1s
+	}
+	//esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,sizeof(char1_str), char1_str, false);
+	vTaskDelete(NULL);
+}
+
 struct gatts_profile_inst {
     esp_gatts_cb_t gatts_cb;
     uint16_t gatts_if;
@@ -971,14 +1031,14 @@ static struct gatts_char_inst gl_char[] = {
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
 				.char_uuid.uuid.uuid16 =  0x2A38,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE ,
+				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
 				.char_val = &gatts_demo_char2_val,
 				.char_control=NULL,
 				.char_handle=0,
 				.char_read_callback=char2_read_handler,
 				.char_write_callback=char2_write_handler,
 				.descr_uuid.len = 0,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,  0x2902
 				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.descr_val = &gatts_demo_descr2_val,
 				.descr_control=NULL,
@@ -1287,12 +1347,12 @@ void char2_notify_handle(esp_gatt_if_t gatts_if, uint16_t conn_id) {
 	ESP_LOGI(GATTS_TAG, "char%d_notify_handler \n",char_num);
 	if (is_notify==1) {
 		notify_pos='0';
-		for (uint32_t i=0;i<10;i++) {
+		/*for (uint32_t i=0;i<10;i++) {
 			ESP_LOGI(GATTS_TAG, "char%d_notify_handle esp_ble_gatts_send_indicate\n",char_num);
 			vTaskDelay(1000 / portTICK_RATE_MS); // delay 1s
 			esp_ble_gatts_send_indicate(gatts_if, conn_id, gl_char[char_num].char_handle,1,&notify_pos,false);
 			notify_pos++;
-		}
+		}*/
 	}
 }
 void char3_notify_handle(esp_gatt_if_t gatts_if, uint16_t conn_id) {
@@ -1367,7 +1427,7 @@ void char1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED OFF",7)==0) {
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED SWITCH",10)==0) {
     } else {
-    	char1_notify_handle(gatts_if, param->write.conn_id);
+    	//char1_notify_handle(gatts_if, param->write.conn_id);
     }
 }
 void char2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -1389,7 +1449,7 @@ void char2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED OFF",7)==0) {
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED SWITCH",10)==0) {
     } else {
-    	char2_notify_handle(gatts_if, param->write.conn_id);
+    	//char2_notify_handle(gatts_if, param->write.conn_id);
     }
 }
 void char3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -1411,7 +1471,7 @@ void char3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED OFF",7)==0) {
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED SWITCH",10)==0) {
     } else {
-    	char3_notify_handle(gatts_if, param->write.conn_id);
+    	//char3_notify_handle(gatts_if, param->write.conn_id);
     }
 }
 void char4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -1477,7 +1537,7 @@ void char6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED OFF",7)==0) {
     } else if (strncmp((const char *)gl_char[char_num].char_val->attr_value,"LED SWITCH",10)==0) {
     } else {
-    	char1_notify_handle(gatts_if, param->write.conn_id);
+    	//char1_notify_handle(gatts_if, param->write.conn_id);
     }
 }
 
@@ -1567,6 +1627,7 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 }
 
 /* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
+
 static struct gatts_profile_inst gl_profile_tab[] = {
 		[PROFILE_A_APP_ID] = {
 				.char_num =0,
@@ -1599,7 +1660,7 @@ typedef struct {
     int                     prepare_len;
 } prepare_type_env_t;
 
-static prepare_type_env_t a_prepare_write_env;
+static prepare_type_env_t a_prepare_write_env,b_prepare_write_env,c_prepare_write_env,d_prepare_write_env;
 
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
@@ -1754,28 +1815,15 @@ void gatts_check_add_char(esp_bt_uuid_t char_uuid, uint16_t attr_handle,uint8_t 
 		}
 
 		ESP_LOGI(GATTS_TAG, "FOUND Char pos %d handle %d\n", ble_add_char_pos,attr_handle);
-		if (profile % 2){	//Pulse service
-			gl_char[ble_add_char_pos].char_handle=attr_handle;
+		gl_char[ble_add_char_pos].char_handle=attr_handle;
 
-		}else{				//HM Service
-			gl_char[ble_add_char_pos].char_handle  =attr_handle;
-			//gl_char[ble_add_char_pos+1].char_handle=attr_handle;
-		}
 
 		// is there a descriptor to add ?
 		if (gl_char[ble_add_char_pos].descr_uuid.len!=0 && gl_char[ble_add_char_pos].descr_handle==0) {
 			ESP_LOGI(GATTS_TAG, "ADD Descr pos %d handle %d service %d\n", ble_add_char_pos,gl_char[ble_add_char_pos].descr_handle,gl_profile_tab[profile].service_handle);
-			if(profile%2){
-				esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos].descr_uuid,
-						gl_char[ble_add_char_pos].descr_perm, gl_char[ble_add_char_pos].descr_val, gl_char[ble_add_char_pos].descr_control);
-			}else{
-				esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos].descr_uuid,
+			esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos].descr_uuid,
 					gl_char[ble_add_char_pos].descr_perm, gl_char[ble_add_char_pos].descr_val, gl_char[ble_add_char_pos].descr_control);
-				//esp_ble_gatts_add_char_descr(gl_profile_tab[profile].service_handle, &gl_char[ble_add_char_pos+1].descr_uuid,
-					//				gl_char[ble_add_char_pos+1].descr_perm, gl_char[ble_add_char_pos+1].descr_val, gl_char[ble_add_char_pos+1].descr_control);
-			}
 		} else {
-
 			gatts_add_char(profile);
 		}
 	}
@@ -1802,7 +1850,7 @@ void gatts_check_callback(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 
 	ESP_LOGI(GATTS_TAG, "gatts_check_callback read %d num %d handle %d\n", read, GATTS_CHAR_NUM, handle);
 	for (uint32_t pos=0;pos<GATTS_CHAR_NUM;pos++) {
-		ESP_LOGI(GATTS_TAG, "gatts_check_callback (%d) in pos %d \n\t\tLooking for handle %d\n", gl_char[pos].char_handle,pos, handle);
+		//ESP_LOGI(GATTS_TAG, "gatts_check_callback (%d) in pos %d \n\t\tLooking for handle %d\n", gl_char[pos].char_handle,pos, handle);
 		if (gl_char[pos].char_handle==handle) {
 			if (read==1) {
 				if (gl_char[pos].char_read_callback!=NULL) {
@@ -1880,27 +1928,25 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     case ESP_GATTS_WRITE_EVT: {
     	ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, conn_id %d, trans_id %d, handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
     	ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, value len %d, value %08x\n", param->write.len, *(uint32_t *)param->write.value);
-
     	if (!param->write.is_prep){
-
     		esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
+
     		if (gl_profile_tab[profile].descr_handle == param->write.handle && param->write.len == 2){
+    			printf("descr_handle== param->write.handle");
     			uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
     			if (descr_value == 0x0001){
     				if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
     					ESP_LOGI(GATTS_TAG, "notify enable");
-    					uint8_t notify_data[32];
-    					vTaskDelay(pdMS_TO_TICKS(500));
-    					for (int i = 0; i < sizeof(notify_data); ++i)
-    					{
-    						notify_data[i] = i%0xff;
-    						char1_str[2] = i%0xff;
-    						//vTaskDelay(pdMS_TO_TICKS(1000));
-        					esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
-        							sizeof(char1_str), char1_str, false);
 
-    					}
-    					//the size of notify_data[] need less than MTU size
+						notify_task_data.char_handle = gl_profile_tab[profile].char_handle;
+						notify_task_data.gatts_if = gatts_if;
+						notify_task_data.param = *param;
+
+						esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,sizeof(char1_str), char1_str, false);
+#ifdef EN_NOTIFY_0
+						xTaskCreate(notify_task, "notify_task", 1024 * 2, (void*) profile, 10, xHandle);
+#endif
+						//the size of notify_data[] need less than MTU size
     					/*esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
     							sizeof(char1_str), char1_str, false);
     					esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
@@ -1921,14 +1967,15 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     			}
     			else if (descr_value == 0x0000){
     				ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
+    				//vTaskDelete(xHandle);
     			}else{
     				ESP_LOGE(GATTS_TAG, "unknown descr value");
     				esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
     			}
     		}
     	}
-    	gatts_check_callback(event, gatts_if, param);
     	//example_write_event_env(gatts_if, &a_prepare_write_env, param);
+    	gatts_check_callback(event, gatts_if, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
@@ -2002,7 +2049,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s", esp_err_to_name(param->conf.status));
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2066,14 +2113,15 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                 if (descr_value == 0x0001){
                     if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
                         ESP_LOGI(GATTS_TAG, "notify enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i)
-                        {
-                            notify_data[i] = i%0xff;
-                        }
+
+                        notify_task_data.char_handle = gl_profile_tab[profile].char_handle;
+                        notify_task_data.gatts_if = gatts_if;
+                        notify_task_data.param = *param;
                         //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
-                                                sizeof(notify_data), notify_data, false);
+                        //esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle, sizeof(notify_data), notify_data, false);
+#ifdef EN_NOTIFY_1
+						xTaskCreate(notify_task, "notify_task", 1024 * 2, (void*) profile, 10, xHandle);
+#endif
                     }
                 }else if (descr_value == 0x0002){
                     if (ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -2097,14 +2145,14 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
             }
         }
-        //example_write_event_env(gatts_if, &a_prepare_write_env, param);
+        //example_write_event_env(gatts_if, &b_prepare_write_env, param);
         gatts_check_callback(event, gatts_if, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
         ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        example_exec_write_event_env(&a_prepare_write_env, param);
+        example_exec_write_event_env(&b_prepare_write_env, param);
         break;
     case ESP_GATTS_MTU_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_MTU_EVT, MTU %d", param->mtu.mtu);
@@ -2119,7 +2167,6 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         esp_ble_gatts_start_service(gl_profile_tab[profile].service_handle);
         gatts_add_char(profile);
-
 
         break;
     case ESP_GATTS_ADD_INCL_SRVC_EVT:
@@ -2158,7 +2205,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s",  esp_err_to_name(param->conf.status));
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2196,23 +2243,6 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_A);
 
-        esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(TEST_DEVICE_NAME);
-        if (set_dev_name_ret){
-            ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
-        }
-
-        //config adv data
-        esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
-        if (ret){
-            ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
-        }
-        adv_config_done |= adv_config_flag;
-        //config scan response data
-        ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
-        if (ret){
-            ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
-        }
-        adv_config_done |= scan_rsp_config_flag;
         break;
 
     case ESP_GATTS_READ_EVT: {
@@ -2240,14 +2270,15 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                 if (descr_value == 0x0001){
                     if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
                         ESP_LOGI(GATTS_TAG, "notify enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i)
-                        {
-                            notify_data[i] = i%0xff;
-                        }
+
+                        notify_task_data.char_handle = gl_profile_tab[profile].char_handle;
+                        notify_task_data.gatts_if = gatts_if;
+                        notify_task_data.param = *param;
                         //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
-                                                sizeof(notify_data), notify_data, false);
+                        //esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,sizeof(notify_data), notify_data, false);
+#ifdef EN_NOTIFY_2
+						xTaskCreate(notify_task, "notify_task", 1024 * 2, (void*) profile, 10, xHandle);
+#endif
                     }
                 }else if (descr_value == 0x0002){
                     if (ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -2271,14 +2302,14 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
             }
         }
-        //example_write_event_env(gatts_if, &a_prepare_write_env, param);
+        //example_write_event_env(gatts_if, &c_prepare_write_env, param);
         gatts_check_callback(event, gatts_if, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
         ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        example_exec_write_event_env(&a_prepare_write_env, param);
+        example_exec_write_event_env(&c_prepare_write_env, param);
         break;
     case ESP_GATTS_MTU_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_MTU_EVT, MTU %d", param->mtu.mtu);
@@ -2293,7 +2324,6 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
         esp_ble_gatts_start_service(gl_profile_tab[profile].service_handle);
         gatts_add_char(profile);
-
 
         break;
     case ESP_GATTS_ADD_INCL_SRVC_EVT:
@@ -2331,7 +2361,7 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s",  esp_err_to_name(param->conf.status));
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
@@ -2395,14 +2425,16 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                 if (descr_value == 0x0001){
                     if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
                         ESP_LOGI(GATTS_TAG, "notify enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i)
-                        {
-                            notify_data[i] = i%0xff;
-                        }
+
+                        notify_task_data.char_handle = gl_profile_tab[profile].char_handle;
+                        notify_task_data.gatts_if = gatts_if;
+                        notify_task_data.param = *param;
+
                         //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
-                                                sizeof(notify_data), notify_data, false);
+                        //esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle, sizeof(notify_data), notify_data, false);
+#ifdef EN_NOTIFY_3
+						xTaskCreate(notify_task, "notify_task", 1024 * 2, (void*) profile, 10, xHandle);
+#endif
                     }
                 }else if (descr_value == 0x0002){
                     if (ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -2412,6 +2444,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         {
                             indicate_data[i] = i%0xff;
                         }
+
                         //the size of indicate_data[] need less than MTU size
                         esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle,
                                                 sizeof(indicate_data), indicate_data, true);
@@ -2426,14 +2459,14 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
             }
         }
-        //example_write_event_env(gatts_if, &a_prepare_write_env, param);
+        //example_write_event_env(gatts_if, &d_prepare_write_env, param);
         gatts_check_callback(event, gatts_if, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
         ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        example_exec_write_event_env(&a_prepare_write_env, param);
+        example_exec_write_event_env(&d_prepare_write_env, param);
         break;
     case ESP_GATTS_MTU_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_MTU_EVT, MTU %d", param->mtu.mtu);
@@ -2487,7 +2520,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
         break;
     case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %s", esp_err_to_name(param->conf.status));
         if (param->conf.status != ESP_GATT_OK){
             esp_log_buffer_hex(GATTS_TAG, param->conf.value, param->conf.len);
         }
