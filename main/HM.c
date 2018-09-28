@@ -730,8 +730,8 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 #define RR_INTERVAL_NOT_PRESENT 				0x00	//
 #define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
 
-#define CHAR1_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
-#define CHAR4_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
+#define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_PRESENT | RR_INTERVAL_NOT_PRESENT
+#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_PRESENT | RR_INTERVAL_NOT_PRESENT
 
 //*****Pulse oximeter FLAG defines *****//
 #define SPO2PS_FAST_PRESENT						0x01	//
@@ -743,14 +743,29 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 #define CHAR3_FLAGS			0x0
 #define CHAR6_FLAGS			0x0
 
-//uint8_t char1_str[] = {CHAR1_FLAGS,80};//,13551%255,13551>>8};	//Heart Rate
-uint8_t char1_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};//,13551%255,13551>>8};	//Heart Rate
+#define PROFILE_NUM 4		//TOTAL Profile number
+#define PROFILE_A_APP_ID 0
+#define PROFILE_B_APP_ID 1
+#define PROFILE_C_APP_ID 2
+#define PROFILE_D_APP_ID 3
 
-uint8_t char2_str[] = {FINGER}; 				//Body Location:
-uint8_t char3_str[] = {CHAR3_FLAGS,99,0,11,0};					//Pulse Measurement , value: 99 , 11-> data for testing
-uint8_t char4_str[] = {CHAR4_FLAGS,70};//,18500%255,18500>>8};	//Heart Rate
-uint8_t char5_str[] = {WRIST}; 					//Body Location:
-uint8_t char6_str[] = {CHAR6_FLAGS,98,0,10,0};					//Pulse Measurement
+#define GATTS_CHAR_NUM_A		2	//HR 	CHAR
+#define GATTS_CHAR_NUM_B		1	//PULSE CHAR
+#define GATTS_CHAR_NUM			(GATTS_CHAR_NUM_A + GATTS_CHAR_NUM_B)*2 	//TOTAL CHAR x2 sensors
+
+static uint32_t ble_add_char_pos;
+
+#define EN_NOTIFY_0
+#define EN_NOTIFY_1
+#define EN_NOTIFY_2
+#define EN_NOTIFY_3
+
+uint8_t char1_str[] = {FINGER}; 									//Body Location:
+uint8_t char2_str[] = {CHAR2_FLAGS,111,3601&0x0F,3601&0xF0,0,PROFILE_A_APP_ID};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
+uint8_t char3_str[] = {CHAR3_FLAGS,98,0,0,0,PROFILE_B_APP_ID};		//Pulse Measurement , value: 99 , 11-> data for testing
+uint8_t char4_str[] = {WRIST};							 			//Body Location:
+uint8_t char5_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0,PROFILE_C_APP_ID}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
+uint8_t char6_str[] = {CHAR6_FLAGS,99,0,0,0,PROFILE_D_APP_ID};		//Pulse Measurement
 
 uint8_t descr1_str[] = {0,0};
 uint8_t descr2_str[] = {0,0};
@@ -758,8 +773,6 @@ uint8_t descr3_str[] = {0,0};
 uint8_t descr4_str[] = {0,0};
 uint8_t descr5_str[] = {0,0};
 uint8_t descr6_str[] = {0,0};
-
-
 
 esp_attr_value_t gatts_demo_char1_val = {
 	.attr_max_len = 22,
@@ -915,22 +928,8 @@ static esp_ble_adv_params_t adv_params = {
     .adv_filter_policy  = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-#define PROFILE_NUM 4		//TOTAL Profile number
-#define PROFILE_A_APP_ID 0
-#define PROFILE_B_APP_ID 1
-#define PROFILE_C_APP_ID 2
-#define PROFILE_D_APP_ID 3
 
-#define GATTS_CHAR_NUM_A		2	//HR 	CHAR
-#define GATTS_CHAR_NUM_B		1	//PULSE CHAR
-#define GATTS_CHAR_NUM			(GATTS_CHAR_NUM_A + GATTS_CHAR_NUM_B)*2 	//TOTAL CHAR x2 sensors
 
-static uint32_t ble_add_char_pos;
-
-#define EN_NOTIFY_0
-#define EN_NOTIFY_1
-#define EN_NOTIFY_2
-#define EN_NOTIFY_3
 
 static struct notify_struct {
 		esp_gatt_if_t gatts_if;
@@ -938,7 +937,7 @@ static struct notify_struct {
 		uint16_t char_handle;
 }notify_task_data[PROFILE_NUM];
 
-uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate
+uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate//TODO delete this line
 void notify_task( void* arg) {
 #ifndef PLOT
 	printf("\tNotify TASK!\n");
@@ -948,13 +947,13 @@ void notify_task( void* arg) {
 	uint8_t profile = arg;
 	switch (profile) {
 	case PROFILE_A_APP_ID:
-		memcpy(descr_aux,char1_str,sizeof(char1_str));
+		memcpy(descr_aux,char2_str,sizeof(char2_str));
 		break;
 	case PROFILE_B_APP_ID:
 		memcpy(descr_aux,char3_str,sizeof(char3_str));
 		break;
 	case PROFILE_C_APP_ID:
-		memcpy(descr_aux,char4_str,sizeof(char4_str));
+		memcpy(descr_aux,char5_str,sizeof(char5_str));
 		break;
 	case PROFILE_D_APP_ID:
 		memcpy(descr_aux,char6_str,sizeof(char6_str));
@@ -967,6 +966,7 @@ void notify_task( void* arg) {
 
 	for (int i = (int)arg*10; i < (int)arg*10 + 5; i++) { //infinite loop
 		descr_aux[1] = i % 255;
+		descr_aux[5] = arg;
 		printf("\tSent: {%d, %d, %d, %d, %d, %d}\n",descr_aux[0],descr_aux[1],descr_aux[2],descr_aux[3],descr_aux[4],descr_aux[5]);
 		printf("\tConn_id: %d\n",notify_task_data[profile].param.write.conn_id);
 		printf("\tchar_handle: %d\n",notify_task_data[profile].char_handle);
@@ -1019,38 +1019,38 @@ static struct gatts_char_inst gl_char[] = {
 				.char_uuid.uuid.uuid16 =  0x2A38,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
-				.char_val = &gatts_demo_char2_val,
+				.char_val = &gatts_demo_char1_val,
 				.char_control=NULL,
 				.char_handle=0,
-				.char_read_callback=char2_read_handler,
-				.char_write_callback=char2_write_handler,
-				.descr_uuid.len = 0,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,  0x2902
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr2_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr2_read_handler,
-				.descr_write_callback=descr2_write_handler
-		},
-		{		//Hearth rate Measurement Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16, // RX
-				.char_uuid.uuid.uuid16 =  0x2A37,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &gatts_demo_char1_val,
-				.char_control = NULL,
-				.char_handle = 0,
 				.char_read_callback=char1_read_handler,
 				.char_write_callback=char1_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
+				.descr_uuid.len = 0,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,  0x2902
 				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.descr_val = &gatts_demo_descr1_val,
 				.descr_control=NULL,
 				.descr_handle=0,
 				.descr_read_callback=descr1_read_handler,
 				.descr_write_callback=descr1_write_handler
+		},
+		{		//Hearth rate Measurement Characteristic
+				.char_uuid.len = ESP_UUID_LEN_16, // RX
+				.char_uuid.uuid.uuid16 =  0x2A37,
+				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
+				.char_val = &gatts_demo_char2_val,
+				.char_control = NULL,
+				.char_handle = 0,
+				.char_read_callback=char2_read_handler,
+				.char_write_callback=char2_write_handler,
+				.descr_uuid.len = ESP_UUID_LEN_16,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
+				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.descr_val = &gatts_demo_descr2_val,
+				.descr_control=NULL,
+				.descr_handle=0,
+				.descr_read_callback=descr2_read_handler,
+				.descr_write_callback=descr2_write_handler
 		},
 		{		//PLX Spot-check measurement
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
@@ -1076,38 +1076,38 @@ static struct gatts_char_inst gl_char[] = {
 				.char_uuid.uuid.uuid16 =  0x2A38,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE ,
-				.char_val = &gatts_demo_char5_val,
+				.char_val = &gatts_demo_char4_val,
 				.char_control=NULL,
 				.char_handle=0,
-				.char_read_callback=char5_read_handler,
-				.char_write_callback=char5_write_handler,
-				.descr_uuid.len = 0,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr5_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr5_read_handler,
-				.descr_write_callback=descr5_write_handler
-		},
-		{		//Hearth rate Measurement Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16, // RX
-				.char_uuid.uuid.uuid16 =  0x2A37,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &gatts_demo_char4_val,
-				.char_control = NULL,
-				.char_handle = 0,
 				.char_read_callback=char4_read_handler,
 				.char_write_callback=char4_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
+				.descr_uuid.len = 0,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
 				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.descr_val = &gatts_demo_descr4_val,
 				.descr_control=NULL,
 				.descr_handle=0,
 				.descr_read_callback=descr4_read_handler,
 				.descr_write_callback=descr4_write_handler
+		},
+		{		//Hearth rate Measurement Characteristic
+				.char_uuid.len = ESP_UUID_LEN_16, // RX
+				.char_uuid.uuid.uuid16 =  0x2A37,
+				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
+				.char_val = &gatts_demo_char5_val,
+				.char_control = NULL,
+				.char_handle = 0,
+				.char_read_callback=char5_read_handler,
+				.char_write_callback=char5_write_handler,
+				.descr_uuid.len = ESP_UUID_LEN_16,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
+				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.descr_val = &gatts_demo_descr5_val,
+				.descr_control=NULL,
+				.descr_handle=0,
+				.descr_read_callback=descr5_read_handler,
+				.descr_write_callback=descr5_write_handler
 		},
 		{		//PLX Spot-check measurement
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
@@ -1869,7 +1869,7 @@ void gatts_check_callback(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 			}
 			break;
 		}
-		ESP_LOGI(GATTS_TAG, "descr_handle (%d) in pos %d \n\t\tLooking for handle %d\n", gl_char[pos].descr_handle ,pos, handle);
+		//ESP_LOGI(GATTS_TAG, "descr_handle (%d) in pos %d \n\t\tLooking for handle %d\n", gl_char[pos].descr_handle ,pos, handle);
 		if (gl_char[pos].char_handle+1==handle) {
 			if (read==1) {
 				if (gl_char[pos].descr_read_callback!=NULL) {
