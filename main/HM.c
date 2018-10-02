@@ -1160,26 +1160,34 @@ void notify_task( void* arg) {
 	uint8_t bytes_to_notify = FIFO_A_FULL;
 	uint16_t raw_sensor_data[bytes_to_notify];
 	uint8_t profile = (uint8_t) arg;
+	uint8_t char_profile=1;
 	switch (profile) {
 	case PROFILE_A_APP_ID:
-		gl_char[1].is_notify ? memcpy(descr_aux,char2_str,sizeof(char2_str)) : vTaskDelete(NULL);
+		char_profile = 1;
+		gl_char[char_profile].is_notify ? memcpy(descr_aux,char2_str,sizeof(char2_str)) : vTaskDelete(NULL);
 		break;
 	case PROFILE_B_APP_ID:
-		gl_char[2].is_notify ? memcpy(descr_aux,char3_str,sizeof(char3_str)) : vTaskDelete(NULL);
+		char_profile = 2;
+		gl_char[char_profile].is_notify ? memcpy(descr_aux,char3_str,sizeof(char3_str)) : vTaskDelete(NULL);
 		break;
 	case PROFILE_C_APP_ID:
-		gl_char[4].is_notify ? memcpy(descr_aux,char5_str,sizeof(char5_str)) : vTaskDelete(NULL);
+		char_profile = 4;
+		gl_char[char_profile].is_notify ? memcpy(descr_aux,char5_str,sizeof(char5_str)) : vTaskDelete(NULL);
 		break;
 	case PROFILE_D_APP_ID:
-		gl_char[5].is_notify ? memcpy(descr_aux,char6_str,sizeof(char6_str)) : vTaskDelete(NULL);
+		char_profile = 5;
+		gl_char[char_profile].is_notify ? memcpy(descr_aux,char6_str,sizeof(char6_str)) : vTaskDelete(NULL);
 		break;
 	case PROFILE_E_APP_ID:
-		gl_char[6].is_notify ? raw = true : vTaskDelete(NULL) ;
+		char_profile = 6;
+		gl_char[char_profile].is_notify ? raw = true : vTaskDelete(NULL) ;
 		break;
 	case PROFILE_F_APP_ID:
-		gl_char[7].is_notify ? raw = true : vTaskDelete(NULL);
+		char_profile = 7;
+		gl_char[char_profile].is_notify ? raw = true : vTaskDelete(NULL);
 		break;
 	case PROFILE_G_APP_ID: //Battery
+		char_profile = 8;
 		break;
 	default:
 		//descr_aux does not change
@@ -1198,14 +1206,16 @@ void notify_task( void* arg) {
 		esp_ble_gatts_send_indicate(notify_task_data[profile].gatts_if, notify_task_data[profile].param.write.conn_id, notify_task_data[profile].char_handle,
 							sizeof(raw_sensor_data),raw_sensor_data , false);
 	}else{
-		for (int i = (int)arg*10; i < (int)arg*10 + 5; i++) { //infinite loop
+		for (int i = (int)arg*10; i > -1; i++) { //infinite loop
 			descr_aux[1] = i % 255;
 			descr_aux[5] = (int)arg;
 			printf("\tSent: {%d, %d, %d, %d, %d, %d}\n",descr_aux[0],descr_aux[1],descr_aux[2],descr_aux[3],descr_aux[4],descr_aux[5]);
 			printf("\tConn_id: %d\n",notify_task_data[profile].param.write.conn_id);
 			printf("\tchar_handle: %d\n",notify_task_data[profile].char_handle);
-			esp_ble_gatts_send_indicate(notify_task_data[profile].gatts_if, notify_task_data[profile].param.write.conn_id, notify_task_data[profile].char_handle,
-					sizeof(descr_aux),descr_aux , false);
+
+			gl_char[char_profile].is_notify ? esp_ble_gatts_send_indicate(notify_task_data[profile].gatts_if, notify_task_data[profile].param.write.conn_id, notify_task_data[profile].char_handle,
+					sizeof(descr_aux),descr_aux , false) :
+					vTaskDelete(NULL);
 			vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
 		}
 	}
@@ -2151,6 +2161,9 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     }
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
+        for (int i = 0; i < GATTS_CHAR_NUM; i++) {
+        	gl_char[i].is_notify = false;
+		}
         esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GATTS_CONF_EVT:
