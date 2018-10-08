@@ -692,7 +692,8 @@ void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
 void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
 #define GATTS_TAG 					"GATT_Server"
-#define TEST_DEVICE_NAME            "HM_BLE_Koval" /*"HM_BLE_Calil"*/
+#define TEST_DEVICE_NAME            "HM_BLE_Koval"
+//#define TEST_DEVICE_NAME            "HM_BLE_Calil"
 
 //defined 1 profile for each service
 #define PROFILE_NUM 6		//TOTAL Profile number
@@ -701,14 +702,13 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 #define PROFILE_C_APP_ID 2	//	HR2
 #define PROFILE_D_APP_ID 3	//	PLX2
 #define PROFILE_E_APP_ID 4	//	RAW data 1
-#define PROFILE_F_APP_ID 5	//	RAW data 2
-#define PROFILE_G_APP_ID 6	//	Battery level
+#define PROFILE_F_APP_ID 5	//	Battery level
 
 #define GATTS_CHAR_NUM_A		2	//HR 	CHAR
 #define GATTS_CHAR_NUM_B		1	//PULSE CHAR
-#define GATTS_CHAR_NUM_E		1	//HR 	Raw data
-#define GATTS_CHAR_NUM_F		1	//HR 	Raw data
-#define GATTS_CHAR_NUM			(GATTS_CHAR_NUM_A + GATTS_CHAR_NUM_B + GATTS_CHAR_NUM_E)*2 	//TOTAL CHAR x2 sensors
+#define GATTS_CHAR_NUM_E		2	//HR 	Raw data
+#define GATTS_CHAR_NUM_F		1	//Battery level
+#define GATTS_CHAR_NUM			(GATTS_CHAR_NUM_A + GATTS_CHAR_NUM_B + GATTS_CHAR_NUM_E)*2  + GATTS_CHAR_NUM_F	//TOTAL CHAR x2 sensors
 
 
 #define GATTS_SERVICE_UUID_HEART_RATE   0x180D 			//Heart Rate Service uuid
@@ -724,6 +724,10 @@ void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, es
 #define GATTS_SERVICE_UUID_RAW_DATA_SERVICE   0x18FF 	//Raw data Service uuid
 #define GATTS_CHAR_UUID_E       0x2AFF					//PLX Spot-Check Measurement characteristic uuid
 #define GATTS_NUM_HANDLE_E     	1+GATTS_CHAR_NUM_E*3
+
+#define GATTS_SERVICE_UUID_BATTERY_SERVICE   0x180F 	//Battery level Service uuid
+#define GATTS_CHAR_UUID_F       0x2A19					//PLX Spot-Check Measurement characteristic uuid
+#define GATTS_NUM_HANDLE_F     	1+GATTS_CHAR_NUM_F*3
 
 #define TEST_MANUFACTURER_DATA_LEN  17
 
@@ -778,6 +782,8 @@ uint8_t char3_str[] = {CHAR3_FLAGS,98,0,0,0,PROFILE_B_APP_ID};		//Pulse Measurem
 uint8_t char4_str[] = {WRIST};							 			//Body Location:
 uint8_t char5_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0,PROFILE_C_APP_ID}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
 uint8_t char6_str[] = {CHAR6_FLAGS,99,0,0,0,PROFILE_D_APP_ID};		//Pulse Measurement
+uint8_t char7_str[] = {69};				//Battery level %
+
 
 uint8_t descr1_str[] = {0,0};
 uint8_t descr2_str[] = {0,0};
@@ -1147,6 +1153,26 @@ static struct gatts_char_inst gl_char[] = {
 				.descr_read_callback=descr6_read_handler,
 				.descr_write_callback=descr6_write_handler,
 				.is_notify = false
+		},
+		{		//Battery level
+				.char_uuid.len = ESP_UUID_LEN_16,  // TX
+				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_F,
+				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
+				.char_val = &gatts_demo_char6_val,
+				.char_control=NULL,
+				.char_handle=0,
+				.char_read_callback=char6_read_handler,
+				.char_write_callback=char6_write_handler,
+				.descr_uuid.len = ESP_UUID_LEN_16,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
+				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.descr_val = &gatts_demo_descr6_val,
+				.descr_control=NULL,
+				.descr_handle=0,
+				.descr_read_callback=descr6_read_handler,
+				.descr_write_callback=descr6_write_handler,
+				.is_notify = false
 		}
 };
 
@@ -1155,39 +1181,37 @@ void notify_task( void* arg) {
 	printf("\tNotify TASK!\n");
 	printf("Profile %d\n", (uint8_t)arg);
 #endif
-	bool raw = false;
+	bool raw = false,battery = false;
 	uint8_t descr_aux[6];
 	uint8_t bytes_to_notify = FIFO_A_FULL;
 	uint16_t raw_sensor_data[bytes_to_notify];
 	uint8_t profile = (uint8_t) arg;
 	uint8_t char_profile=1;
 	switch (profile) {
-	case PROFILE_A_APP_ID:
+	case PROFILE_A_APP_ID:	//HR1
 		char_profile = 1;
 		gl_char[char_profile].is_notify ? memcpy(descr_aux,char2_str,sizeof(char2_str)) : vTaskDelete(NULL);
 		break;
-	case PROFILE_B_APP_ID:
+	case PROFILE_B_APP_ID:	//PLX1
 		char_profile = 2;
 		gl_char[char_profile].is_notify ? memcpy(descr_aux,char3_str,sizeof(char3_str)) : vTaskDelete(NULL);
 		break;
-	case PROFILE_C_APP_ID:
+	case PROFILE_C_APP_ID:	//HR2
 		char_profile = 4;
 		gl_char[char_profile].is_notify ? memcpy(descr_aux,char5_str,sizeof(char5_str)) : vTaskDelete(NULL);
 		break;
-	case PROFILE_D_APP_ID:
+	case PROFILE_D_APP_ID:	//PLX2
 		char_profile = 5;
 		gl_char[char_profile].is_notify ? memcpy(descr_aux,char6_str,sizeof(char6_str)) : vTaskDelete(NULL);
 		break;
-	case PROFILE_E_APP_ID:
+	case PROFILE_E_APP_ID:	//RAW data
 		char_profile = 6;
 		gl_char[char_profile].is_notify ? raw = true : vTaskDelete(NULL) ;
+		gl_char[char_profile].is_notify ? raw = true : vTaskDelete(NULL) ;
 		break;
-	case PROFILE_F_APP_ID:
+	case PROFILE_F_APP_ID:	//Battery level
 		char_profile = 7;
-		gl_char[char_profile].is_notify ? raw = true : vTaskDelete(NULL);
-		break;
-	case PROFILE_G_APP_ID: //Battery
-		char_profile = 8;
+		gl_char[char_profile].is_notify ? battery = true : vTaskDelete(NULL);
 		break;
 	default:
 		//descr_aux does not change
@@ -1206,8 +1230,9 @@ void notify_task( void* arg) {
 		esp_ble_gatts_send_indicate(notify_task_data[profile].gatts_if, notify_task_data[profile].param.write.conn_id, notify_task_data[profile].char_handle,
 							sizeof(raw_sensor_data),raw_sensor_data , false);
 	}else{
+		uint8_t data_pos = battery ? 0 : 1;
 		for (int i = (int)arg*10; i > -1; i++) { //infinite loop
-			descr_aux[1] = i % 255;
+			descr_aux[data_pos] = i % 255;
 			descr_aux[5] = (int)arg;
 			printf("\tSent: {%d, %d, %d, %d, %d, %d}\n",descr_aux[0],descr_aux[1],descr_aux[2],descr_aux[3],descr_aux[4],descr_aux[5]);
 			printf("\tConn_id: %d\n",notify_task_data[profile].param.write.conn_id);
@@ -1765,7 +1790,7 @@ static struct gatts_profile_inst gl_profile_tab[] = {
 				.char_num_total = GATTS_CHAR_NUM_F,
 				.gatts_cb = gatts_profile_f_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-		},
+		}
 
 };
 
@@ -2676,7 +2701,7 @@ static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         gl_profile_tab[profile].service_id.id.uuid.len = ESP_UUID_LEN_16;
         gl_profile_tab[profile].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_RAW_DATA_SERVICE;
 
-        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_B);
+        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_E);
         break;
 
     case ESP_GATTS_READ_EVT: {
@@ -2832,9 +2857,9 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         gl_profile_tab[profile].service_id.is_primary = true;
         gl_profile_tab[profile].service_id.id.inst_id = 0x00;
         gl_profile_tab[profile].service_id.id.uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[profile].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_RAW_DATA_SERVICE;
+        gl_profile_tab[profile].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_BATTERY_SERVICE;
 
-        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_B);
+        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_F);
         break;
 
     case ESP_GATTS_READ_EVT: {
@@ -2892,7 +2917,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                 }
                 else if (descr_value == 0x0000){
                     ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
-                    gl_char[6].is_notify = false;
+                    gl_char[7].is_notify = false;
                 }else{
                     ESP_LOGE(GATTS_TAG, "unknown descr value");
                     esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
