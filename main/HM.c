@@ -1344,12 +1344,13 @@ void notify_task_optimized( void* arg) {
 			for (int j=0;j<gl_profile_tab[profile].char_num_total;j++,ch++){ //for each char in this profile
 				if(gl_char[ch].is_notify){
 					n_notify++;
-					printf("char handle = %d",gl_profile_tab[profile].char_handle[j]);
+					//printf("char handle = %d\n",gl_profile_tab[profile].char_handle[j]);
 					esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
 							gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 				}
 			}
 		}
+		printf("notified %d chars\n",n_notify);
 		vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
 	}while(n_notify>0);//there is any char to notify
 	notify_task_running = false;
@@ -2219,9 +2220,17 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         	gl_profile_tab[profile].char_handle[0] = param->add_char.attr_handle;
         	gatts_check_add_char(param->add_char.char_uuid,param->add_char.attr_handle,profile);
         }
-        if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
+
+        if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) { //there are more chars to add
         	gatts_add_char(profile);
-		}
+        }else{//organize the char handlers
+        	for (int i = gl_profile_tab[profile].char_num_total-1; i >=0; i--) {
+
+        		uint8_t base_handler = gl_profile_tab[profile].char_handle[0];
+        		gl_profile_tab[profile].char_handle[i]= base_handler-((gl_profile_tab[profile].char_num_total-i-1)*3);
+        		printf("profile: %d\ti=%d\tchar_handler[i]=%d\n",profile,i,gl_profile_tab[profile].char_handle[i]);
+			}
+        }
         break;
     }
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
@@ -2560,6 +2569,12 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         }
         if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
         	gatts_add_char(profile);
+        }else{//organize the char handlers
+        	for (int i = gl_profile_tab[profile].char_num_total-1; i >=0; i--) {
+        		uint8_t base_handler = gl_profile_tab[profile].char_handle[0];
+        		gl_profile_tab[profile].char_handle[i]= base_handler-((gl_profile_tab[profile].char_num_total-i-1)*3);//ex: 67,64,61...
+        		printf("profile: %d\ti=%d\tchar_handler[i]=%d\n",profile,i,gl_profile_tab[profile].char_handle[i]);
+        	}
         }
         break;
     }
@@ -2897,8 +2912,10 @@ static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         	gatts_add_char(profile);
         }else{//organize the char handlers
         	for (int i = gl_profile_tab[profile].char_num_total-1; i >=0; i--) {
+
         		uint8_t base_handler = gl_profile_tab[profile].char_handle[0];
         		gl_profile_tab[profile].char_handle[i]= base_handler-((gl_profile_tab[profile].char_num_total-i-1)*3);
+        		//printf("profile: %d\ti=%d\tchar_handler[i]=%d\n",profile,i,gl_profile_tab[profile].char_handle[i]);
 			}
         }
         break;
