@@ -1,6 +1,6 @@
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
 #define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
-//#define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
+#define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
 
 #define EN_BLE_TASK					//enable bluetooth
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
@@ -120,7 +120,11 @@
 
 #define SENSOR_1 "sensor_one"
 #define SENSOR_2 "sensor_two"
-#define TRESHOLD_ON 40000
+#define TRESHOLD_ON 15000
+
+static uint16_t RAW1_str[FIFO_A_FULL] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
+static uint16_t RAW2_str[FIFO_A_FULL] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
+static bool sensor_have_finger[2]; //flag for finger presence on sensor
 
 
 struct SensorData {
@@ -137,7 +141,7 @@ void isr_task_manager(void* arg);
 void check_ret(int ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
 esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);
-esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[]);
+esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16_t sensorDataIR[]);
 static void max30102_init(i2c_port_t i2c_num);
 static void max30102_reset(i2c_port_t i2c_num);
 static void max30102_shutdown(i2c_port_t i2c_num);
@@ -147,9 +151,9 @@ uint8_t get_FIFO_CONF_REG();
 uint8_t get_LED1_PA();
 uint8_t get_LED2_PA();
 void intr_init();
-double process_data(struct SensorData sensorData[],double *mean1, double *mean2);
-void struct_rms(struct SensorData sensorData[],double *rms_l1, double *rms_l2);
-void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2);
+double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
+void struct_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms_l1, double *rms_l2);
+void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
 
 void bt_main();
 
@@ -272,18 +276,31 @@ printf("Start i2c_task_1!\n");
 #endif
 	i2c_port_t port = (i2c_port_t)arg;	//I2C_NUM_0 or I2C_NUM_1
 	struct SensorData sensorData[FIFO_A_FULL],processed_data[FIFO_A_FULL];
-	max30102_read_fifo(port, sensorData);
+	uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
+	max30102_read_fifo(port, RAWsensorDataRED,RAWsensorDataIR);
+	if (port == I2C_NUM_0){ //if sensor0
+		memcpy(RAW1_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
+	}else{
+		memcpy(RAW2_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
+	}
+
+
 	//memcpy(processed_data,sensorData,sizeof(sensorData));
 
-	double SPO2 = process_data(sensorData,&mean1,&mean2);
+	double SPO2 = process_data(RAWsensorDataRED,RAWsensorDataIR,&mean1,&mean2);
 
 	//the size of notify_data[] need less than MTU size
 	//esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle[0],
 			//sizeof(sensorData), sensorData, false);
 
-	//printf("Mean:\t%f,\t%f\n",mean1,mean2);
+	printf("Mean:\t%f,\t%f\n",mean1,mean2);
 	//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
 	if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
+		if (port == I2C_NUM_0){
+			sensor_have_finger[0] = false;
+		}else {
+			sensor_have_finger[1] = false;
+		}
 		max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 	}
 #ifndef CONFIG_BT_ENABLED
@@ -310,9 +327,11 @@ void blink_task(void* arg)
 
 void isr_task_manager(void* arg)
 {
-	//printf("********** ISR_TASK_MANAGER **********\n\n");
+	printf("**** ISR_TASK_MANAGER on core %d *****\n\n",xPortGetCoreID());
+	//todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
+	//todo resolver a media de ter de meter 2x o dedo no sensor
 	uint8_t data=0x00;
-	i2c_port_t port = arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
+	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
 	max30102_read_reg(REG_INTR_STATUS_1,port,&data);
 
@@ -325,7 +344,12 @@ void isr_task_manager(void* arg)
 	prox_int 		? printf("\tPROX INT\n") : NULL;
 #endif
 	if (prox_int){
-		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000
+		if ((i2c_port_t)arg == INT_PIN_0){
+			sensor_have_finger[0] = true ;
+		}else{
+			sensor_have_finger[1] = true ;
+		}
+		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000 //disable prox interrupt and enable fifo_a_full
 	}
 
 
@@ -379,7 +403,7 @@ esp_err_t max30102_read_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data_h
 	    return ret;
 }
 
-esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FIFO_A_FULL/2])
+esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16_t sensorDataIR[])
 {
 
 	uint8_t LED_1[FIFO_A_FULL/2][3],LED_2[FIFO_A_FULL/2][3];
@@ -416,10 +440,17 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, struct SensorData sensorData[FI
 	i2c_cmd_link_delete(cmd);
 
 	for(int i=0; i < FIFO_A_FULL/2; i++){
-		sensorData[i].LED_1 = (((LED_1[i][0] &  0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);
-		sensorData[i].LED_2 = (((LED_2[i][0] &  0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//
+		/*sensorDataRED[i] = (((LED_1[i][0] &  0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);
+		sensorDataIR[i]= (((LED_2[i][0] &  0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES);	//*/
 		//printf("\t%x %x %x\n",LED_1[i][0]&0x03,LED_1[i][1],LED_1[i][2]);
-		fprintf(stdout,"%d, %d\n",sensorData[i].LED_1 ,sensorData[i].LED_2);
+
+		sensorDataRED[i] = 	((((LED_1[i][0] &  0b00000011) <<16) + (LED_1[i][1] <<8) + LED_1[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES))>>2;
+		sensorDataIR[i]= 	((((LED_2[i][0] &  0b00000011) <<16) + (LED_2[i][1] <<8) + LED_2[i][2])>>(18-SPO2_RES)<<(18-SPO2_RES))>>2;	//
+/*#if SPO2_RES <= 16
+		sensorDataRED[i] =sensorDataRED[i] >>2;
+		sensorDataIR[i]  =sensorDataIR[i]  >>2;
+#endif*/
+		fprintf(stdout,"%x, %x, %x\t%x, %x, %x\n",LED_1[i][0],LED_1[i][1],LED_1[i][2],LED_2[i][0],LED_2[i][1],LED_2[i][2]);
 	}
 
 
@@ -628,10 +659,10 @@ void intr_init(){
 	 esp_sleep_enable_ext1_wakeup(GPIO_INPUT_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up by pin 34 and 35
 }
 
-double process_data(struct SensorData sensorData[],double *mean1, double *mean2){
+double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
 	double rms1, rms2, dc1, dc2, R,SPO2;
-	struct_rms(sensorData,&rms1,&rms2);
-	struct_mean(sensorData,&dc1,&dc2);
+	struct_rms(RAWsensorDataRED,RAWsensorDataIR,&rms1,&rms2);
+	struct_mean(RAWsensorDataRED,RAWsensorDataIR,&dc1,&dc2);
 	R = (rms1/dc1)/(rms2/dc2);
 	SPO2 = 110-(25*R);
 #ifndef PLOT
@@ -645,12 +676,12 @@ double process_data(struct SensorData sensorData[],double *mean1, double *mean2)
 	return SPO2;
 }
 
-void struct_rms(struct SensorData sensorData[],double *rms_1, double *rms_2){
-	double dataLength = FIFO_A_FULL/2;
+void struct_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms_1, double *rms_2){
+	double dataLength = sizeof(RAWsensorDataRED)/sizeof(int);
 	double sum_led1=0 , sum_led2 =0;
 	for (int i = 0; i < dataLength; ++i) {
-		sum_led1 +=(sensorData[i].LED_1)^2;
-		sum_led2 +=(sensorData[i].LED_2)^2;
+		sum_led1 +=(RAWsensorDataRED[i])^2;
+		sum_led2 +=(RAWsensorDataIR[i])^2;
 	}
 
 	*rms_1= sqrt((1/dataLength)*sum_led1);
@@ -658,12 +689,12 @@ void struct_rms(struct SensorData sensorData[],double *rms_1, double *rms_2){
 	return;
 }
 
-void struct_mean(struct SensorData sensorData[],double *mean1, double *mean2){
+void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
 	double dataLength = FIFO_A_FULL/2;
 	double sum1=0 ,sum2=0 ;
 	for (int i = 0; i < dataLength; ++i) {
-		sum1 += sensorData[i].LED_1;
-		sum2 += sensorData[i].LED_2;
+		sum1 += RAWsensorDataRED[i];
+		sum2 += RAWsensorDataIR[i];
 	}
 	*mean1 = sum1/dataLength;
 	*mean2 = sum2/dataLength;
@@ -790,19 +821,16 @@ static uint32_t ble_add_char_pos;
 static uint8_t n_notify = 0;
 static bool notify_task_running = false;
 
-
 static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:
 static uint8_t HR1_str[] = {CHAR2_FLAGS,111,0,100,0,PROFILE_HR1_APP_ID};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
 static uint8_t PLX1_str[] = {CHAR3_FLAGS,98,0,0,0,PROFILE_PLX1_APP_ID};		//Pulse Measurement , value: 99 , 11-> data for testing
 static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
 static uint8_t HR2_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0,PROFILE_HR2_APP_ID}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
 static uint8_t PLX2_str[] = {CHAR6_FLAGS,99,0,0,0,PROFILE_PLX2_APP_ID};		//Pulse Measurement
-static uint16_t RAW1_str[] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
-static uint16_t RAW2_str[] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
-static uint8_t BAT_str[] = {69};				//Battery level %
+static uint8_t BAT_str[] = {69};								//Battery level %
+//RAW
 
 static uint8_t descr1_str[] = {0,0};
-
 
 esp_attr_value_t char1_BL_val = {
 	.attr_max_len = 22,
@@ -841,12 +869,12 @@ esp_attr_value_t char6_PLX2_val = {
 };
 
 esp_attr_value_t char7_RAW1_val = {
-	.attr_max_len = 22,
+	.attr_max_len = FIFO_A_FULL*8,
 	.attr_len		= sizeof(RAW1_str),
 	.attr_value     = RAW1_str,
 };
 esp_attr_value_t char8_RAW2_val = {
-	.attr_max_len = 22,
+	.attr_max_len = FIFO_A_FULL*8,
 	.attr_len		= sizeof(RAW2_str),
 	.attr_value     = RAW2_str,
 };
@@ -1216,6 +1244,12 @@ void notify_task_optimized( void* arg) {
 				if(gl_char[ch].is_notify){
 					n_notify++;
 					//printf("char handle = %d\n",gl_profile_tab[profile].char_handle[j]);
+					if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_RAW){ //if raw characteristic
+						if(!sensor_have_finger[j]){ //if not detecting finger, do not notify
+							printf("No finger on sensor %d\n",j);
+							continue;
+						}
+					}
 					esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
 							gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 				}
