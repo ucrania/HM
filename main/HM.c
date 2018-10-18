@@ -122,10 +122,11 @@
 #define SENSOR_2 "sensor_two"
 #define TRESHOLD_ON 15000
 
-static uint16_t RAW1_str[FIFO_A_FULL] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
-static uint16_t RAW2_str[FIFO_A_FULL] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
+static uint16_t RAW1_str[FIFO_A_FULL/2] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
+static uint16_t RAW2_str[FIFO_A_FULL/2] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
 static bool sensor_have_finger[2]; //flag for finger presence on sensor
 
+TaskHandle_t notify_TaskHandle = NULL;
 
 struct SensorData {
 	int LED_1;	//RED
@@ -303,6 +304,9 @@ printf("Start i2c_task_1!\n");
 		}
 		max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 	}
+	if(notify_TaskHandle != NULL){
+		vTaskResume(notify_TaskHandle);
+	}
 #ifndef CONFIG_BT_ENABLED
 	esp_light_sleep_start();
 #endif
@@ -327,9 +331,10 @@ void blink_task(void* arg)
 
 void isr_task_manager(void* arg)
 {
-	printf("**** ISR_TASK_MANAGER on core %d *****\n\n",xPortGetCoreID());
+	ESP_LOGI("ISR_TASK_MANAGER","on core %d ",xPortGetCoreID());
 	//todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
 	//todo resolver a media de ter de meter 2x o dedo no sensor
+	//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
 	uint8_t data=0x00;
 	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
@@ -702,7 +707,7 @@ void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *
 
 /*********************BLE PART**************************************************************************************/
 
-static TaskHandle_t xHandle;
+
 
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
@@ -1256,7 +1261,8 @@ void notify_task_optimized( void* arg) {
 			}
 		}
 		printf("notified %d chars\n",n_notify);
-		vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
+		//vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
+		vTaskSuspend(notify_TaskHandle);
 	}while(n_notify>0);//there is any char to notify
 	notify_task_running = false;
 	vTaskDelete(NULL);
@@ -1893,7 +1899,6 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
     prepare_write_env->prepare_len = 0;
 }
 
-
 void gatts_add_char(uint8_t profile) {
 
 	ESP_LOGI(GATTS_TAG, "gatts_add_char %d in profile %d\n", gl_profile_tab[profile].char_num, profile);
@@ -2053,7 +2058,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[1].is_notify = true;	//notify flag
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
 						}
 #endif
 						esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle[0],
@@ -2075,7 +2080,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     			else if (descr_value == 0x0000){
     				ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
     				gl_char[1].is_notify = false;	//notify flag
-    				//vTaskDelete(xHandle);
+    				//vTaskDelete(notify_TaskHandle);
     			}else{
     				ESP_LOGE(GATTS_TAG, "unknown descr value");
     				esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
@@ -2234,7 +2239,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         gl_char[2].is_notify = true;
 #ifdef EN_NOTIFY
                         if (!notify_task_running){
-                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
                         }
 #endif
                     }
@@ -2389,7 +2394,7 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         gl_char[4].is_notify = true;
 #ifdef EN_NOTIFY
                         if (!notify_task_running){
-                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
                         }
 #endif
                     }
@@ -2548,7 +2553,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         gl_char[5].is_notify = true;
 #ifdef EN_NOTIFY
                         if (!notify_task_running){
-                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
                         }
 #endif
                     }
@@ -2708,7 +2713,7 @@ static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                     	}
 #ifdef EN_NOTIFY
                         if (!notify_task_running){
-                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
                         }
 #endif
                     }
@@ -2873,7 +2878,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         gl_char[8].is_notify = true;
 #ifdef EN_NOTIFY
                         if (!notify_task_running){
-                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, xHandle);
+                        	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
                         }
 #else
 						ESP_LOGI(GATTS_TAG, "notify not defined ");
