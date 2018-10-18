@@ -4,7 +4,7 @@
 
 #define EN_BLE_TASK					//enable bluetooth
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
-#define EN_NOTIFY					//enable nitify task
+#define EN_NOTIFY					//enable notify task
 #define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 #define PLOT 						//disables other printf
 
@@ -185,7 +185,7 @@ static void max30102_shutdown(i2c_port_t i2c_num){
 }
 static void max30102_reset(i2c_port_t i2c_num){
 	uint8_t data_h=0x00;
-	max30102_read_reg(REG_INTR_STATUS_1,I2C_NUM_1,&data_h);//clear interrupt pin
+	max30102_read_reg(REG_INTR_STATUS_1,i2c_num,&data_h);//clear interrupt pin
 	int ret = max30102_read_reg(REG_MODE_CONFIG, i2c_num, &data_h);
 	max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x40 + data_h);	//reset and keep the same mode
 }
