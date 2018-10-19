@@ -122,9 +122,11 @@
 #define SENSOR_2 "sensor_two"
 #define TRESHOLD_ON 15000
 
+#define PACKS_TO_SEND 1 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
 static uint16_t RAW1_str[FIFO_A_FULL/2] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
 static uint16_t RAW2_str[FIFO_A_FULL/2] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
 static bool sensor_have_finger[2]; //flag for finger presence on sensor
+static int buffer_pos_s0=-1,buffer_pos_s1=-1;
 
 TaskHandle_t notify_TaskHandle = NULL;
 
@@ -132,6 +134,137 @@ struct SensorData {
 	int LED_1;	//RED
 	int	LED_2;	//IR
 };
+
+/*********************BLE DEFINES**************************************************************************************/
+
+static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+
+void char1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void char6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+
+void descr1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+
+uint8_t get_n_notify();
+
+#define GATTS_TAG 					"GATT_Server"
+#define TEST_DEVICE_NAME            "HM_BLE_Koval"
+//#define TEST_DEVICE_NAME            "HM_BLE_Calil"
+
+//defined 1 profile for each service
+#define PROFILE_TOTAL_NUM 6		//TOTAL Profile number
+#define PROFILE_HR1_APP_ID 	0	// 	HR1
+#define PROFILE_PLX1_APP_ID 1	//	PLX1
+#define PROFILE_HR2_APP_ID 	2	//	HR2
+#define PROFILE_PLX2_APP_ID 3	//	PLX2
+#define PROFILE_RAW_APP_ID 	4	//	RAW data 1
+#define PROFILE_BATT_APP_ID 5	//	Battery level
+
+#define GATTS_CHAR_NUM_HR1		2	//HR 	CHAR
+#define GATTS_CHAR_NUM_PLX1		1	//PULSE CHAR
+#define GATTS_CHAR_NUM_HR2		2	//HR 	CHAR
+#define GATTS_CHAR_NUM_PLX2		1	//PULSE CHAR
+#define GATTS_CHAR_NUM_RAW		2	//HR 	Raw data
+#define GATTS_CHAR_NUM_BATT		1	//Battery level
+#define GATTS_CHAR_NUM_TOTAL			(GATTS_CHAR_NUM_HR1 + GATTS_CHAR_NUM_PLX1)+ (GATTS_CHAR_NUM_HR2 + GATTS_CHAR_NUM_PLX2) + GATTS_CHAR_NUM_RAW + GATTS_CHAR_NUM_BATT	//TOTAL CHAR x2 sensors
+
+
+#define GATTS_SERVICE_UUID_HEART_RATE   0x180D 			//Heart Rate Service uuid
+#define GATTS_CHAR_UUID_HR      	0x2A37					//Heart Rate Measurement characteristic uuid
+#define GATTS_CHAR_UUID_BODY_LOCATION      0x2A38					//Body sensor location   characteristic uuid
+#define GATTS_DESCR_UUID_A     	0x2901					//
+#define GATTS_NUM_HANDLE_HR		1+GATTS_CHAR_NUM_HR1*3
+
+#define GATTS_SERVICE_UUID_PULSE_OXIMETER   0x1822 		//Pulse Oximeter Service uuid
+#define GATTS_CHAR_UUID_PLX       	0x2A5F					//PLX Spot-Check Measurement characteristic uuid
+#define GATTS_NUM_HANDLE_PLX     	1+GATTS_CHAR_NUM_PLX1*3
+
+#define GATTS_SERVICE_UUID_RAW_DATA_SERVICE   0x18FF 	//Raw data Service uuid
+#define GATTS_CHAR_UUID_RAW       0x2AFF					//Raw data characteristic uuid
+#define GATTS_NUM_HANDLE_RAW     	1+GATTS_CHAR_NUM_RAW*3
+
+#define GATTS_SERVICE_UUID_BATTERY_SERVICE   0x180F 	//Battery level Service uuid
+#define GATTS_CHAR_UUID_BAT       0x2A19					//Battery level characteristic uuid
+#define GATTS_NUM_HANDLE_BAT     	1+GATTS_CHAR_NUM_BATT*3
+
+#define TEST_MANUFACTURER_DATA_LEN  17
+
+#define PREPARE_BUF_MAX_SIZE 1024
+
+//****Body Location defines****//
+#define OTHER		0
+#define CHEST		1
+#define WRIST		2
+#define FINGER		3
+#define HAND		4
+#define EAR_LOBE	5
+#define FOOT		6
+
+//****Heart rate Measurment Service FLAG defines****//
+#define HEART_RATE_8BIT 						0x00	//
+#define HEART_RATE_16BIT 						0x01	//Heart rate value with 16bit
+#define SENSOR_CONTACT_NOT_SUPPORTED 			0x02	//
+#define SENSOR_CONTACT_NOT_DETECTED 			0x04	//
+#define SENSOR_CONTACT_DETECTED		 			0x06	//
+#define ENERGY_EXPENDED_NOT_PRESENT 			0x00	//
+#define ENERGY_EXPENDED_PRESENT 				0x08	//in Kilojoule
+#define RR_INTERVAL_NOT_PRESENT 				0x00	//
+#define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
+
+#define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
+#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_DETECTED | ENERGY_EXPENDED_PRESENT 	 	| RR_INTERVAL_NOT_PRESENT
+
+//*****Pulse oximeter FLAG defines *****//
+#define SPO2PS_FAST_PRESENT						0x01	//
+#define SPO2PS_SLOW_PRESENT						0x02	//
+#define MEASURMENT_STATUS_PRESENT 				0x04	//
+#define DEVICE_AND_SENSOR_STATUS_PRESENT		0x08	//
+#define PULSE_AMPLITUDE_INDEX_PRESENT			0x10	//
+
+#define CHAR3_FLAGS			0x0
+#define CHAR6_FLAGS			0x0
+
+static uint32_t ble_add_char_pos;
+static uint8_t n_notify = 0;
+static bool notify_task_running = false;
+
+static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:
+static uint8_t HR1_str[] = {CHAR2_FLAGS,111,0,100,0};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
+static uint8_t PLX1_str[] = {CHAR3_FLAGS,98,0,0,0};		//Pulse Measurement , value: 99 , 11-> data for testing
+static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
+static uint8_t HR2_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
+static uint8_t PLX2_str[] = {CHAR6_FLAGS,99,0,0,0};		//Pulse Measurement
+static uint8_t BAT_str[] = {69};								//Battery level %
+//RAW
+
+static uint8_t descr1_str[] = {0,0};
+
+////end ble part
 
 void i2c_task_0(void* arg);
 void i2c_task_1(void* arg);
@@ -275,38 +408,48 @@ void i2c_task_1(void* arg)
 #ifndef PLOT
 printf("Start i2c_task_1!\n");
 #endif
+int *buffer_pos;
 	i2c_port_t port = (i2c_port_t)arg;	//I2C_NUM_0 or I2C_NUM_1
-	struct SensorData sensorData[FIFO_A_FULL],processed_data[FIFO_A_FULL];
 	uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
 	max30102_read_fifo(port, RAWsensorDataRED,RAWsensorDataIR);
 	if (port == I2C_NUM_0){ //if sensor0
 		memcpy(RAW1_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
+		buffer_pos = &buffer_pos_s0;
 	}else{
 		memcpy(RAW2_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
+		buffer_pos = &buffer_pos_s1;
 	}
+	*buffer_pos = *buffer_pos +1;
 
+	if(*buffer_pos > 0){
+		//memcpy(processed_data,sensorData,sizeof(sensorData));
 
-	//memcpy(processed_data,sensorData,sizeof(sensorData));
+		double SPO2 = process_data(RAWsensorDataRED,RAWsensorDataIR,&mean1,&mean2);
 
-	double SPO2 = process_data(RAWsensorDataRED,RAWsensorDataIR,&mean1,&mean2);
+		//the size of notify_data[] need less than MTU size
+		//esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle[0],
+		//sizeof(sensorData), sensorData, false);
 
-	//the size of notify_data[] need less than MTU size
-	//esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle[0],
-			//sizeof(sensorData), sensorData, false);
-
-	printf("Mean:\t%f,\t%f\n",mean1,mean2);
-	//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
-	if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
-		if (port == I2C_NUM_0){
-			sensor_have_finger[0] = false;
-		}else {
-			sensor_have_finger[1] = false;
+		printf("Mean:\t%f,\t%f\n",mean1,mean2);
+		//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
+		if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
+			if (port == I2C_NUM_0){
+				sensor_have_finger[0] = false;
+				*buffer_pos = -1;
+			}else {
+				sensor_have_finger[1] = false;
+				*buffer_pos = -1;
+			}
+			max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 		}
-		max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
+		if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){
+			vTaskResume(notify_TaskHandle);
+			*buffer_pos = 0;
+		}
+	}else{
+		printf("******Ignoring first read!*****\n\n");
 	}
-	if(notify_TaskHandle != NULL){
-		vTaskResume(notify_TaskHandle);
-	}
+
 #ifndef CONFIG_BT_ENABLED
 	esp_light_sleep_start();
 #endif
@@ -335,6 +478,7 @@ void isr_task_manager(void* arg)
 	//todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
 	//todo resolver a media de ter de meter 2x o dedo no sensor
 	//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
+	//todo enviar notify a dizer que o sensor foi desconectado
 	uint8_t data=0x00;
 	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
@@ -354,6 +498,7 @@ void isr_task_manager(void* arg)
 		}else{
 			sensor_have_finger[1] = true ;
 		}
+//clear buffer
 		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000 //disable prox interrupt and enable fifo_a_full
 	}
 
@@ -706,136 +851,6 @@ void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *
 }
 
 /*********************BLE PART**************************************************************************************/
-
-
-
-
-static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-void char1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-void descr1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-uint8_t get_n_notify();
-
-#define GATTS_TAG 					"GATT_Server"
-#define TEST_DEVICE_NAME            "HM_BLE_Koval"
-//#define TEST_DEVICE_NAME            "HM_BLE_Calil"
-
-//defined 1 profile for each service
-#define PROFILE_TOTAL_NUM 6		//TOTAL Profile number
-#define PROFILE_HR1_APP_ID 	0	// 	HR1
-#define PROFILE_PLX1_APP_ID 1	//	PLX1
-#define PROFILE_HR2_APP_ID 	2	//	HR2
-#define PROFILE_PLX2_APP_ID 3	//	PLX2
-#define PROFILE_RAW_APP_ID 	4	//	RAW data 1
-#define PROFILE_BATT_APP_ID 5	//	Battery level
-
-#define GATTS_CHAR_NUM_HR1		2	//HR 	CHAR
-#define GATTS_CHAR_NUM_PLX1		1	//PULSE CHAR
-#define GATTS_CHAR_NUM_HR2		2	//HR 	CHAR
-#define GATTS_CHAR_NUM_PLX2		1	//PULSE CHAR
-#define GATTS_CHAR_NUM_RAW		2	//HR 	Raw data
-#define GATTS_CHAR_NUM_BATT		1	//Battery level
-#define GATTS_CHAR_NUM_TOTAL			(GATTS_CHAR_NUM_HR1 + GATTS_CHAR_NUM_PLX1)+ (GATTS_CHAR_NUM_HR2 + GATTS_CHAR_NUM_PLX2) + GATTS_CHAR_NUM_RAW + GATTS_CHAR_NUM_BATT	//TOTAL CHAR x2 sensors
-
-
-#define GATTS_SERVICE_UUID_HEART_RATE   0x180D 			//Heart Rate Service uuid
-#define GATTS_CHAR_UUID_HR      	0x2A37					//Heart Rate Measurement characteristic uuid
-#define GATTS_CHAR_UUID_BODY_LOCATION      0x2A38					//Body sensor location   characteristic uuid
-#define GATTS_DESCR_UUID_A     	0x2901					//
-#define GATTS_NUM_HANDLE_HR		1+GATTS_CHAR_NUM_HR1*3
-
-#define GATTS_SERVICE_UUID_PULSE_OXIMETER   0x1822 		//Pulse Oximeter Service uuid
-#define GATTS_CHAR_UUID_PLX       	0x2A5F					//PLX Spot-Check Measurement characteristic uuid
-#define GATTS_NUM_HANDLE_PLX     	1+GATTS_CHAR_NUM_PLX1*3
-
-#define GATTS_SERVICE_UUID_RAW_DATA_SERVICE   0x18FF 	//Raw data Service uuid
-#define GATTS_CHAR_UUID_RAW       0x2AFF					//Raw data characteristic uuid
-#define GATTS_NUM_HANDLE_RAW     	1+GATTS_CHAR_NUM_RAW*3
-
-#define GATTS_SERVICE_UUID_BATTERY_SERVICE   0x180F 	//Battery level Service uuid
-#define GATTS_CHAR_UUID_BAT       0x2A19					//Battery level characteristic uuid
-#define GATTS_NUM_HANDLE_BAT     	1+GATTS_CHAR_NUM_BATT*3
-
-#define TEST_MANUFACTURER_DATA_LEN  17
-
-#define PREPARE_BUF_MAX_SIZE 1024
-
-//****Body Location defines****//
-#define OTHER		0
-#define CHEST		1
-#define WRIST		2
-#define FINGER		3
-#define HAND		4
-#define EAR_LOBE	5
-#define FOOT		6
-
-//****Heart rate Measurment Service FLAG defines****//
-#define HEART_RATE_8BIT 						0x00	//
-#define HEART_RATE_16BIT 						0x01	//Heart rate value with 16bit
-#define SENSOR_CONTACT_NOT_SUPPORTED 			0x02	//
-#define SENSOR_CONTACT_NOT_DETECTED 			0x04	//
-#define SENSOR_CONTACT_DETECTED		 			0x06	//
-#define ENERGY_EXPENDED_NOT_PRESENT 			0x00	//
-#define ENERGY_EXPENDED_PRESENT 				0x08	//in Kilojoule
-#define RR_INTERVAL_NOT_PRESENT 				0x00	//
-#define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
-
-#define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_PRESENT | RR_INTERVAL_NOT_PRESENT
-#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_SUPPORTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
-
-//*****Pulse oximeter FLAG defines *****//
-#define SPO2PS_FAST_PRESENT						0x01	//
-#define SPO2PS_SLOW_PRESENT						0x02	//
-#define MEASURMENT_STATUS_PRESENT 				0x04	//
-#define DEVICE_AND_SENSOR_STATUS_PRESENT		0x08	//
-#define PULSE_AMPLITUDE_INDEX_PRESENT			0x10	//
-
-#define CHAR3_FLAGS			0x0
-#define CHAR6_FLAGS			0x0
-
-static uint32_t ble_add_char_pos;
-static uint8_t n_notify = 0;
-static bool notify_task_running = false;
-
-static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:
-static uint8_t HR1_str[] = {CHAR2_FLAGS,111,0,100,0,PROFILE_HR1_APP_ID};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
-static uint8_t PLX1_str[] = {CHAR3_FLAGS,98,0,0,0,PROFILE_PLX1_APP_ID};		//Pulse Measurement , value: 99 , 11-> data for testing
-static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
-static uint8_t HR2_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0,PROFILE_HR2_APP_ID}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
-static uint8_t PLX2_str[] = {CHAR6_FLAGS,99,0,0,0,PROFILE_PLX2_APP_ID};		//Pulse Measurement
-static uint8_t BAT_str[] = {69};								//Battery level %
-//RAW
-
-static uint8_t descr1_str[] = {0,0};
 
 esp_attr_value_t char1_BL_val = {
 	.attr_max_len = 22,
@@ -1244,9 +1259,10 @@ void notify_task_optimized( void* arg) {
 	do{
 		n_notify=0;
 		uint8_t ch=0;
+
 		for (int profile=0;profile<PROFILE_TOTAL_NUM;profile++){	//for each profile
 			for (int j=0;j<gl_profile_tab[profile].char_num_total;j++,ch++){ //for each char in this profile
-				if(gl_char[ch].is_notify){
+				if(gl_char[ch].is_notify){	//is char notifying
 					n_notify++;
 					//printf("char handle = %d\n",gl_profile_tab[profile].char_handle[j]);
 					if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_RAW){ //if raw characteristic
@@ -1257,10 +1273,12 @@ void notify_task_optimized( void* arg) {
 					}
 					esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
 							gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+
 				}
 			}
 		}
-		printf("notified %d chars\n",n_notify);
+
+		printf("Have %d chars to notify\n",n_notify);
 		//vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
 		vTaskSuspend(notify_TaskHandle);
 	}while(n_notify>0);//there is any char to notify
@@ -3083,7 +3101,7 @@ void bt_main(){
 	}
 
 	//esp_bt_sleep_enable();
-	esp_ble_tx_power_set(9, 7);	//https://dl.espressif.com/doc/esp-idf/latest/api-reference/bluetooth/controller_vhci.html#_CPPv220esp_ble_tx_power_set20esp_ble_power_type_t17esp_power_level_t
+	esp_ble_tx_power_set(9, 0);	//https://dl.espressif.com/doc/esp-idf/latest/api-reference/bluetooth/controller_vhci.html#_CPPv220esp_ble_tx_power_set20esp_ble_power_type_t17esp_power_level_t
 	return;
 }
 
