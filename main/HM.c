@@ -1,3 +1,11 @@
+//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
+//todo enviar raw data com pacotes de tamanho variavel
+//todo fazer processamento dos dados
+//todo fazer verificaçao para nao notificar dados repetidos
+//*******************+/-feito************
+//todo enviar notify a dizer que o sensor foi desconectado
+//todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
+//todo resolver a media de ter de meter 2x o dedo no sensor
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
 #define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
 #define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
@@ -360,13 +368,15 @@ void app_main()
 	intr_init();
 #ifdef EN_SENSOR0
 	i2c_init(I2C_NUM_0);
-	max30102_reset(I2C_NUM_0);
-	max30102_init(I2C_NUM_0);
+	//max30102_reset(I2C_NUM_0);
+	//max30102_init(I2C_NUM_0);
+	max30102_shutdown(I2C_NUM_0);
 #endif
 #ifdef EN_SENSOR1
 	i2c_init(I2C_NUM_1);
-	max30102_reset(I2C_NUM_1);
-	max30102_init(I2C_NUM_1);
+	//max30102_reset(I2C_NUM_1);
+	//max30102_init(I2C_NUM_1);
+	max30102_shutdown(I2C_NUM_1);
 #endif
 #endif
 
@@ -444,7 +454,7 @@ int *buffer_pos;
 			}
 			max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 		}
-		if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){
+		if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
 			vTaskResume(notify_TaskHandle);
 			*buffer_pos = 0;
 		}
@@ -477,10 +487,6 @@ void blink_task(void* arg)
 void isr_task_manager(void* arg)
 {
 	ESP_LOGI("ISR_TASK_MANAGER","on core %d ",xPortGetCoreID());
-	//todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
-	//todo resolver a media de ter de meter 2x o dedo no sensor
-	//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
-	//todo enviar notify a dizer que o sensor foi desconectado
 	uint8_t data=0x00;
 	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
@@ -2204,6 +2210,14 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     case ESP_GATTS_STOP_EVT:
         break;
     case ESP_GATTS_CONNECT_EVT: {
+#ifdef EN_MAX30102_READING_TASK
+#ifdef EN_SENSOR0
+    	max30102_init(I2C_NUM_0);	//start sensors
+#endif
+#ifdef EN_SENSOR1
+    	max30102_init(I2C_NUM_1);
+#endif
+#endif
         esp_ble_conn_update_params_t conn_params = {0};
         memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
@@ -2223,10 +2237,12 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     }
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
-        for (int i = 0; i < GATTS_CHAR_NUM_TOTAL; i++) {
+        for (int i = 0; i < GATTS_CHAR_NUM_TOTAL; i++) {//disable all notify
         	gl_char[i].is_notify = false;
 		}
         esp_ble_gap_start_advertising(&adv_params);
+        max30102_shutdown(I2C_NUM_0);	//shutdown sensor
+        max30102_shutdown(I2C_NUM_1);	//shutdown sensor
         break;
     case ESP_GATTS_CONF_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
@@ -3066,8 +3082,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     /* If the gatts_if equal to profile A, call profile A cb handler,
      * so here call each profile's callback */
     do {
-        int idx;
-        for (idx = 0; idx < PROFILE_TOTAL_NUM; idx++) {
+        for (int idx = 0; idx < PROFILE_TOTAL_NUM; idx++) {
             if (gatts_if == ESP_GATT_IF_NONE || /* ESP_GATT_IF_NONE, not specify a certain gatt_if, need to call every profile cb function */
                     gatts_if == gl_profile_tab[idx].gatts_if) {
                 if (gl_profile_tab[idx].gatts_cb) {
