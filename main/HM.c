@@ -237,7 +237,9 @@ uint8_t get_n_notify();
 #define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
 
 #define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
-#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_DETECTED | ENERGY_EXPENDED_PRESENT 	 	| RR_INTERVAL_NOT_PRESENT
+#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_PRESENT 	 	| RR_INTERVAL_NOT_PRESENT
+static uint8_t char2_flags		=CHAR2_FLAGS;
+static uint8_t char5_flags		=CHAR5_FLAGS;
 
 //*****Pulse oximeter FLAG defines *****//
 #define SPO2PS_FAST_PRESENT						0x01	//
@@ -1010,6 +1012,7 @@ struct gatts_profile_inst {
     uint16_t descr_handle;
     esp_bt_uuid_t descr_uuid;
     uint16_t char_handle[2];
+    int sensor_id;
 };
 
 static struct gatts_profile_inst gl_profile_tab[] = {
@@ -1018,36 +1021,42 @@ static struct gatts_profile_inst gl_profile_tab[] = {
 				.char_num_total = GATTS_CHAR_NUM_HR1,
 				.gatts_cb = gatts_profile_a_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = 0,
 		},
 		[PROFILE_PLX1_APP_ID] = {
 				.char_num =0,
 				.char_num_total = GATTS_CHAR_NUM_PLX1,
 				.gatts_cb = gatts_profile_b_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = 0,
 		},
 		[PROFILE_HR2_APP_ID] = {
 				.char_num =0,
 				.char_num_total = GATTS_CHAR_NUM_HR2,
 				.gatts_cb = gatts_profile_c_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = 1,
 		},
 		[PROFILE_PLX2_APP_ID] = {
 				.char_num =0,
 				.char_num_total = GATTS_CHAR_NUM_PLX1,
 				.gatts_cb = gatts_profile_d_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = 1,
 		},
 		[PROFILE_RAW_APP_ID] = {
 				.char_num =0,
 				.char_num_total = GATTS_CHAR_NUM_RAW,
 				.gatts_cb = gatts_profile_e_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = -1,
 		},
 		[PROFILE_BATT_APP_ID] = {
 				.char_num =0,
 				.char_num_total = GATTS_CHAR_NUM_BATT,
 				.gatts_cb = gatts_profile_f_event_handler,
 				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+				.sensor_id = -1,
 		}
 
 };
@@ -1264,16 +1273,45 @@ void notify_task_optimized( void* arg) {
 			for (int j=0;j<gl_profile_tab[profile].char_num_total;j++,ch++){ //for each char in this profile
 				if(gl_char[ch].is_notify){	//is char notifying
 					n_notify++;
-					//printf("char handle = %d\n",gl_profile_tab[profile].char_handle[j]);
-					if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_RAW){ //if raw characteristic
-						if(!sensor_have_finger[j]){ //if not detecting finger, do not notify
-							printf("No finger on sensor %d\n",j);
-							continue;
+					switch	(gl_profile_tab[profile].sensor_id){
+					case -1:
+						if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_RAW){ //if raw characteristic
+							if(!sensor_have_finger[j]){ //if not detecting finger, do not notify
+								printf("No finger on sensor %d\n",j);
+								//continue; //do not notify
+								//notify if 1st time
+							}else{
+								esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
+										gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+							}
+						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT){
+							//verify if batery level changed and notify
+							esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
+									gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 						}
+						break;
+					default:
+						if(sensor_have_finger[gl_profile_tab[profile].sensor_id]){
+							if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_HR){ //if heart rate
+								if((gl_char[ch].char_val->attr_value[0] & SENSOR_CONTACT_DETECTED) == SENSOR_CONTACT_NOT_DETECTED){//SENSOR NOT DETECTED
+									gl_char[ch].char_val->attr_value[0] |=  0b00000110;//todo corrigir isto
+									esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
+											gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+								}
+							}
+							esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
+									gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+						}else{//if no finger
+							if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_HR){
+								if((gl_char[ch].char_val->attr_value[0] & SENSOR_CONTACT_DETECTED) == SENSOR_CONTACT_DETECTED){//SENSOR DETECTED
+									gl_char[ch].char_val->attr_value[0] &= 0b11111101; //set as sensor not detected
+									esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
+											gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+								}
+							}
+						}
+						break;
 					}
-					esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
-							gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
-
 				}
 			}
 		}
