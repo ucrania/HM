@@ -1,13 +1,16 @@
-//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
+//todo corrigir double advertising
+//todo organizar o codigo com handlers
 //todo enviar raw data com pacotes de tamanho variavel
 //todo fazer processamento dos dados
 //todo fazer verificaçao para nao notificar dados repetidos
 //*******************+/-feito************
+//todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
 //todo enviar notify a dizer que o sensor foi desconectado
 //todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
 //todo resolver a media de ter de meter 2x o dedo no sensor
+
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
-#define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
+//#define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
 #define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
 
 #define EN_BLE_TASK					//enable bluetooth
@@ -16,245 +19,26 @@
 #define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 #define PLOT 						//disables other printf
 
+#include "defines.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <stdbool.h>
-
-//#include "general_properties.h"
-//#include "ble_properties.h"
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "driver/gpio.h"
-#include "driver/rtc_io.h"
-#include "driver/adc.h"
-#include "driver/i2c.h"
-#include "esp_adc_cal.h"
-#include "esp_intr_alloc.h"
-#include "esp_system.h"
-
-#if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
-#include "esp_bt.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gap_bt_api.h"
-#include "esp_gatts_api.h"
-#include "esp_bt_main.h"
-#include "esp_gatt_common_api.h"
-#endif
-
-#include "esp_log.h"
-#include "nvs_flash.h"
-
-
-#define GATT_MAX_APPS 16//todo ver se faz algo: nao faz nada
-
-#define REG_INTR_STATUS_1 0x00
-#define REG_INTR_STATUS_2 0x01
-#define REG_INTR_ENABLE_1 0x02
-#define REG_INTR_ENABLE_2 0x03
-#define REG_FIFO_WR_PTR 0x04
-#define REG_OVF_COUNTER 0x05
-#define REG_FIFO_RD_PTR 0x06
-#define REG_FIFO_DATA 0x07
-#define REG_FIFO_CONFIG 0x08
-#define REG_MODE_CONFIG 0x09
-#define REG_SPO2_CONFIG 0x0A
-#define REG_LED1_PA 0x0C
-#define REG_LED2_PA 0x0D
-#define REG_PILOT_PA 0x10
-#define REG_MULTI_LED_CTRL1 0x11
-#define REG_MULTI_LED_CTRL2 0x12
-#define REG_TEMP_INTR 0x1F
-#define REG_TEMP_FRAC 0x20
-#define REG_TEMP_CONFIG 0x21
-#define REG_PROX_INT_THRESH 0x30
-#define REG_REV_ID 0xFE
-#define REG_PART_ID 0xFF
-
-#define FIFO_A_FULL_EN		0x80
-#define PRG_RDY_EN			0x40
-#define ALC_OVF_EN			0x20
-#define PROX_INT_EN			0x10
-
-
-
-#define FIFO_A_FULL_EN		0x80
-#define PRG_RDY_EN		0x40
-#define ALC_OVF_EN		0x20
-#define PROX_INT_EN		0x10
-
-#define BLINK_GPIO 5
-#define PRINT    1
-
-#define I2C_SCL_IO_0           	26               /*!<gpio number for i2c slave clock  */
-#define I2C_SDA_IO_0           	25               /*!<gpio number for i2c slave data */
-#define I2C_NUM_0			    I2C_NUM_0        /*!<I2C port number for slave dev */
-
-#define I2C_SCL_IO_1         	19               /*!< gpio number for I2C master clock */
-#define I2C_SDA_IO_1          	18               /*!< gpio number for I2C master data  */
-#define I2C_NUM_1            	I2C_NUM_1        /*!< I2C port number for master dev */
-
-#define I2C_TX_BUF_DISABLE  	0                /*!< I2C master do not need buffer */
-#define I2C_RX_BUF_DISABLE  	0                /*!< I2C master do not need buffer */
-#define I2C_FREQ_HZ         	400000           /*!< I2C master clock frequency */
-
-#define WRITE_BIT               I2C_MASTER_WRITE /*!< I2C master write */
-#define READ_BIT                I2C_MASTER_READ  /*!< I2C master read */
-#define ACK_CHECK_EN            0x1              /*!< I2C master will check ack from slave*/
-#define ACK_CHECK_DIS           0x0              /*!< I2C master will not check ack from slave */
-#define ACK_VAL                 0x0              /*!< I2C ack value */
-#define NACK_VAL                0x1              /*!< I2C nack value */
-
-#define MAXREFDES117_ADDR       0x57             /*!< address for MAXREFDES117 sensor */
-
-#define SPO2_RES 				16				//SPO2 ADC resolution 18,17,16,15 bits
-#define SPO2_SAMPLE_RATE		50				//Options: 50,100,200,400,800,1000,1600,3600 default:100
-
-#define SMP_AVE 				2				//Options: 1,2,4,8,16,32	default:4
-#define FIFO_A_FULL 			30				//Options: 17 - 32			default:17
-#define FIFO_ROLLOVER_EN 		1				//Override data in fifo after it is full
-
-#define LED1_CURRENT 			7				//Red led current 0-50mA 0.2mA resolution
-#define LED2_CURRENT 			LED1_CURRENT	//IR  led current 0-50mA 0.2mA resolution
-
-#define INT_PIN_0     			34				//RTC GPIO used for interruptions
-#define INT_PIN_1     			35				//RTC GPIO used for interruptions
-#define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
-#define ESP_INTR_FLAG_DEFAULT 0
-
-#define SENSOR_1 "sensor_one"
-#define SENSOR_2 "sensor_two"
 #define TRESHOLD_ON 15000
 
-#define PACKS_TO_SEND 1 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
-static uint16_t RAW1_str[FIFO_A_FULL/2] = {0,1,2,3,4,5,6,7,8,9};				//RAW1
-static uint16_t RAW2_str[FIFO_A_FULL/2] = {9,8,7,6,5,4,3,2,1,0};				//RAW2
+#define PACKS_TO_SEND 2 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
+static uint16_t RAW1_str[FIFO_A_FULL/2];				//RAW1
+static uint16_t RAW2_str[FIFO_A_FULL/2];				//RAW2
 static bool sensor_have_finger[2]; //flag for finger presence on sensor
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
 
 TaskHandle_t notify_TaskHandle = NULL;
 
-struct SensorData {
-	int LED_1;	//RED
-	int	LED_2;	//IR
-};
-
 /*********************BLE DEFINES**************************************************************************************/
-
-static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-void char1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void char6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-void descr1_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr1_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr2_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr2_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr3_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr3_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr4_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr4_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr5_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr5_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr6_read_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-void descr6_write_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-
-uint8_t get_n_notify();
 
 #define GATTS_TAG 					"GATT_Server"
 #define TEST_DEVICE_NAME            "HM_BLE_Koval"
 //#define TEST_DEVICE_NAME            "HM_BLE_Calil"
 
-//defined 1 profile for each service
-#define PROFILE_TOTAL_NUM 6		//TOTAL Profile number
-#define PROFILE_HR1_APP_ID 	0	// 	HR1
-#define PROFILE_PLX1_APP_ID 1	//	PLX1
-#define PROFILE_HR2_APP_ID 	2	//	HR2
-#define PROFILE_PLX2_APP_ID 3	//	PLX2
-#define PROFILE_RAW_APP_ID 	4	//	RAW data 1
-#define PROFILE_BATT_APP_ID 5	//	Battery level
-
-#define GATTS_CHAR_NUM_HR1		2	//HR 	CHAR
-#define GATTS_CHAR_NUM_PLX1		1	//PULSE CHAR
-#define GATTS_CHAR_NUM_HR2		2	//HR 	CHAR
-#define GATTS_CHAR_NUM_PLX2		1	//PULSE CHAR
-#define GATTS_CHAR_NUM_RAW		2	//HR 	Raw data
-#define GATTS_CHAR_NUM_BATT		1	//Battery level
-#define GATTS_CHAR_NUM_TOTAL			(GATTS_CHAR_NUM_HR1 + GATTS_CHAR_NUM_PLX1)+ (GATTS_CHAR_NUM_HR2 + GATTS_CHAR_NUM_PLX2) + GATTS_CHAR_NUM_RAW + GATTS_CHAR_NUM_BATT	//TOTAL CHAR x2 sensors
-
-
-#define GATTS_SERVICE_UUID_HEART_RATE   0x180D 			//Heart Rate Service uuid
-#define GATTS_CHAR_UUID_HR      	0x2A37					//Heart Rate Measurement characteristic uuid
-#define GATTS_CHAR_UUID_BODY_LOCATION      0x2A38					//Body sensor location   characteristic uuid
-#define GATTS_DESCR_UUID_A     	0x2901					//
-#define GATTS_NUM_HANDLE_HR		1+GATTS_CHAR_NUM_HR1*3
-
-#define GATTS_SERVICE_UUID_PULSE_OXIMETER   0x1822 		//Pulse Oximeter Service uuid
-#define GATTS_CHAR_UUID_PLX       	0x2A5F					//PLX Spot-Check Measurement characteristic uuid
-#define GATTS_NUM_HANDLE_PLX     	1+GATTS_CHAR_NUM_PLX1*3
-
-#define GATTS_SERVICE_UUID_RAW_DATA_SERVICE   0x18FF 	//Raw data Service uuid
-#define GATTS_CHAR_UUID_RAW       0x2AFF					//Raw data characteristic uuid
-#define GATTS_NUM_HANDLE_RAW     	1+GATTS_CHAR_NUM_RAW*3
-
-#define GATTS_SERVICE_UUID_BATTERY_SERVICE   0x180F 	//Battery level Service uuid
-#define GATTS_CHAR_UUID_BAT       0x2A19					//Battery level characteristic uuid
-#define GATTS_NUM_HANDLE_BAT     	1+GATTS_CHAR_NUM_BATT*3
-
-#define TEST_MANUFACTURER_DATA_LEN  17
-
-#define PREPARE_BUF_MAX_SIZE 1024
-
-//****Body Location defines****//
-#define OTHER		0
-#define CHEST		1
-#define WRIST		2
-#define FINGER		3
-#define HAND		4
-#define EAR_LOBE	5
-#define FOOT		6
-
-//****Heart rate Measurment Service FLAG defines****//
-#define HEART_RATE_8BIT 						0x00	//
-#define HEART_RATE_16BIT 						0x01	//Heart rate value with 16bit
-#define SENSOR_CONTACT_NOT_SUPPORTED 			0x02	//
-#define SENSOR_CONTACT_NOT_DETECTED 			0x04	//
-#define SENSOR_CONTACT_DETECTED		 			0x06	//
-#define ENERGY_EXPENDED_NOT_PRESENT 			0x00	//
-#define ENERGY_EXPENDED_PRESENT 				0x08	//in Kilojoule
-#define RR_INTERVAL_NOT_PRESENT 				0x00	//
-#define RR_INTERVAL_PRESENT 					0x016	//16bit for RR-interval 1/1024 Resolution
-
 #define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
 #define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_PRESENT 	 	| RR_INTERVAL_NOT_PRESENT
-static uint8_t char2_flags		=CHAR2_FLAGS;
-static uint8_t char5_flags		=CHAR5_FLAGS;
-
-//*****Pulse oximeter FLAG defines *****//
-#define SPO2PS_FAST_PRESENT						0x01	//
-#define SPO2PS_SLOW_PRESENT						0x02	//
-#define MEASURMENT_STATUS_PRESENT 				0x04	//
-#define DEVICE_AND_SENSOR_STATUS_PRESENT		0x08	//
-#define PULSE_AMPLITUDE_INDEX_PRESENT			0x10	//
 
 #define CHAR3_FLAGS			0x0
 #define CHAR6_FLAGS			0x0
@@ -263,6 +47,7 @@ static uint32_t ble_add_char_pos;
 static uint8_t n_notify = 0;
 static bool notify_task_running = false;
 
+uint8_t *raw_ptr0,*raw_ptr1;
 static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:
 static uint8_t HR1_str[] = {CHAR2_FLAGS,111,0,100,0};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
 static uint8_t PLX1_str[] = {CHAR3_FLAGS,98,0,0,0};		//Pulse Measurement , value: 99 , 11-> data for testing
@@ -272,34 +57,63 @@ static uint8_t PLX2_str[] = {CHAR6_FLAGS,99,0,0,0};		//Pulse Measurement
 static uint8_t BAT_str[] = {69};								//Battery level %
 //RAW
 
+esp_attr_value_t char1_BL_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(body_location1_str),
+	.attr_value     = body_location1_str,
+};
+
+esp_attr_value_t char2_HR1_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(HR1_str),
+	.attr_value     = HR1_str,
+};
+
+esp_attr_value_t char3_PLX1_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(PLX1_str),
+	.attr_value     = PLX1_str,
+};
+
+esp_attr_value_t char4_BL2_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(body_location2_str),
+	.attr_value     = body_location2_str,
+};
+
+esp_attr_value_t char5_HR2_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(HR2_str),
+	.attr_value     = HR2_str,
+};
+
+esp_attr_value_t char6_PLX2_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(PLX2_str),
+	.attr_value     = PLX2_str,
+};
+
+esp_attr_value_t char7_RAW1_val = {
+	.attr_max_len = FIFO_A_FULL*8,
+	.attr_value     = NULL,
+	.attr_len		=sizeof(char7_RAW1_val.attr_value),
+};
+esp_attr_value_t char8_RAW2_val = {
+	.attr_max_len = FIFO_A_FULL*8,
+	.attr_len		= FIFO_A_FULL,
+	.attr_value     = NULL,
+};
+esp_attr_value_t char9_BAT_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(BAT_str),
+	.attr_value     = BAT_str,
+};
+
+
 static uint8_t descr1_str[] = {0,0};
 
 ////end ble part
 
-void i2c_task_0(void* arg);
-void i2c_task_1(void* arg);
-void blink_task(void* arg);
-void notify_task(void* arg);
-void notify_task_optimized(void* arg);
-void isr_task_manager(void* arg);
-void check_ret(int ret, uint8_t sensor_data_h);
-esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
-esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);
-esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16_t sensorDataIR[]);
-static void max30102_init(i2c_port_t i2c_num);
-static void max30102_reset(i2c_port_t i2c_num);
-static void max30102_shutdown(i2c_port_t i2c_num);
-void check_fifo(int ret,uint8_t sensor_data_h, uint8_t sensor_data_m, uint8_t sensor_data_l);
-uint8_t get_SPO2_CONF_REG();
-uint8_t get_FIFO_CONF_REG();
-uint8_t get_LED1_PA();
-uint8_t get_LED2_PA();
-void intr_init();
-double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
-void struct_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms_l1, double *rms_l2);
-void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
-
-void bt_main();
 
 static xQueueHandle gpio_evt_queue = NULL;
 
@@ -363,19 +177,23 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 
 void app_main()
 {
+
+	//raw_ptr0 = RAW1_str;
+	//raw_ptr1 = RAW2_str;
+	raw_ptr0 = malloc(FIFO_A_FULL);
+	raw_ptr1 = malloc(FIFO_A_FULL);
+	char7_RAW1_val.attr_value = raw_ptr0;
+	char8_RAW2_val.attr_value = raw_ptr1;
+
 #ifdef EN_MAX30102_READING_TASK
 	printf("Start app_main\n");
 	intr_init();
 #ifdef EN_SENSOR0
 	i2c_init(I2C_NUM_0);
-	//max30102_reset(I2C_NUM_0);
-	//max30102_init(I2C_NUM_0);
 	max30102_shutdown(I2C_NUM_0);
 #endif
 #ifdef EN_SENSOR1
 	i2c_init(I2C_NUM_1);
-	//max30102_reset(I2C_NUM_1);
-	//max30102_init(I2C_NUM_1);
 	max30102_shutdown(I2C_NUM_1);
 #endif
 #endif
@@ -425,23 +243,30 @@ int *buffer_pos;
 	uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
 	max30102_read_fifo(port, RAWsensorDataRED,RAWsensorDataIR);
 	if (port == I2C_NUM_0){ //if sensor0
-		memcpy(RAW1_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
 		buffer_pos = &buffer_pos_s0;
+		if(*buffer_pos >= 0){
+			raw_ptr0 = realloc(raw_ptr0,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+			printf("realloced for: %dbytes\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+			memcpy(raw_ptr0+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
+			print_array(raw_ptr0,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
+		}
 	}else{
-		memcpy(RAW2_str,RAWsensorDataIR,sizeof(RAWsensorDataIR));
 		buffer_pos = &buffer_pos_s1;
-	}
-	*buffer_pos = *buffer_pos +1;
+		if(*buffer_pos >= 0){
+			raw_ptr1 = realloc(raw_ptr1,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+			printf("realloced for: %dbytes\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+			memcpy(raw_ptr1+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
+			print_array(raw_ptr1,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
 
-	if(*buffer_pos > 0){
+		}
+	}
+	if (notify_TaskHandle != NULL){
+		*buffer_pos +=1;
+	}
+	if(*buffer_pos > 0){//ignore 1st read
 		//memcpy(processed_data,sensorData,sizeof(sensorData));
 
 		double SPO2 = process_data(RAWsensorDataRED,RAWsensorDataIR,&mean1,&mean2);
-
-		//the size of notify_data[] need less than MTU size
-		//esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle[0],
-		//sizeof(sensorData), sensorData, false);
-
 		printf("Mean:\t%f,\t%f\n",mean1,mean2);
 		//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
 		if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
@@ -455,6 +280,11 @@ int *buffer_pos;
 			max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 		}
 		if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
+			char7_RAW1_val.attr_value=raw_ptr0;
+			char8_RAW2_val.attr_value=raw_ptr1;
+			char7_RAW1_val.attr_len = sizeof(RAW1_str)*(int)(*buffer_pos);
+			char8_RAW2_val.attr_len = sizeof(RAW2_str)*(int)(*buffer_pos);
+			//esp_ble_gatt_set_local_mtu(sizeof(RAW1_str) *buffer_pos + 3);
 			vTaskResume(notify_TaskHandle);
 			*buffer_pos = 0;
 		}
@@ -608,7 +438,8 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16
 		sensorDataRED[i] =sensorDataRED[i] >>2;
 		sensorDataIR[i]  =sensorDataIR[i]  >>2;
 #endif*/
-		fprintf(stdout,"%x, %x, %x\t%x, %x, %x\n",LED_1[i][0],LED_1[i][1],LED_1[i][2],LED_2[i][0],LED_2[i][1],LED_2[i][2]);
+		//fprintf(stdout,"%x, %x, %x\t%x, %x, %x\n",LED_1[i][0],LED_1[i][1],LED_1[i][2],LED_2[i][0],LED_2[i][1],LED_2[i][2]);
+		fprintf(stdout,"0x%x\t0x%x\n",sensorDataRED[i],sensorDataIR[i]);
 	}
 
 
@@ -819,8 +650,8 @@ void intr_init(){
 
 double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
 	double rms1, rms2, dc1, dc2, R,SPO2;
-	struct_rms(RAWsensorDataRED,RAWsensorDataIR,&rms1,&rms2);
-	struct_mean(RAWsensorDataRED,RAWsensorDataIR,&dc1,&dc2);
+	data_rms(RAWsensorDataRED,RAWsensorDataIR,&rms1,&rms2);
+	data_mean(RAWsensorDataRED,RAWsensorDataIR,&dc1,&dc2);
 	R = (rms1/dc1)/(rms2/dc2);
 	SPO2 = 110-(25*R);
 #ifndef PLOT
@@ -834,7 +665,7 @@ double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],doubl
 	return SPO2;
 }
 
-void struct_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms_1, double *rms_2){
+void data_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms_1, double *rms_2){
 	double dataLength = sizeof(RAWsensorDataRED)/sizeof(int);
 	double sum_led1=0 , sum_led2 =0;
 	for (int i = 0; i < dataLength; ++i) {
@@ -847,7 +678,7 @@ void struct_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *r
 	return;
 }
 
-void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
+void data_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
 	double dataLength = FIFO_A_FULL/2;
 	double sum1=0 ,sum2=0 ;
 	for (int i = 0; i < dataLength; ++i) {
@@ -859,58 +690,6 @@ void struct_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *
 }
 
 /*********************BLE PART**************************************************************************************/
-
-esp_attr_value_t char1_BL_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(body_location1_str),
-	.attr_value     = body_location1_str,
-};
-
-esp_attr_value_t char2_HR1_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(HR1_str),
-	.attr_value     = HR1_str,
-};
-
-esp_attr_value_t char3_PLX1_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(PLX1_str),
-	.attr_value     = PLX1_str,
-};
-
-esp_attr_value_t char4_BL2_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(body_location2_str),
-	.attr_value     = body_location2_str,
-};
-
-esp_attr_value_t char5_HR2_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(HR2_str),
-	.attr_value     = HR2_str,
-};
-
-esp_attr_value_t char6_PLX2_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(PLX2_str),
-	.attr_value     = PLX2_str,
-};
-
-esp_attr_value_t char7_RAW1_val = {
-	.attr_max_len = FIFO_A_FULL*8,
-	.attr_len		= sizeof(RAW1_str),
-	.attr_value     = RAW1_str,
-};
-esp_attr_value_t char8_RAW2_val = {
-	.attr_max_len = FIFO_A_FULL*8,
-	.attr_len		= sizeof(RAW2_str),
-	.attr_value     = RAW2_str,
-};
-esp_attr_value_t char9_BAT_val = {
-	.attr_max_len = 22,
-	.attr_len		= sizeof(BAT_str),
-	.attr_value     = BAT_str,
-};
 
 //***************DESCRIPTORS**********************//
 esp_attr_value_t gatts_demo_descr1_val = {
@@ -958,8 +737,8 @@ static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
     .include_name = true,
     .include_txpower = true,
-    .min_interval = 0x05,	//0x20
-    .max_interval = 0x10, 	//0x40
+    .min_interval = 0x20,	//0x20
+    .max_interval = 0x40, 	//0x40
     .appearance = 0x0340,//0x0C40		//http://dev.ti.com/tirex/content/simplelink_cc2640r2_sdk_1_35_00_33/docs/blestack/ble_sw_dev_guide/doxygen/group___g_a_p___appearance___values.html#gafc2f463732a098c1b42d30a766e90a6e
     .manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
     .p_manufacturer_data =  NULL, //&test_manufacturer[0],
@@ -1274,7 +1053,6 @@ void notify_task_optimized( void* arg) {
 	do{
 		n_notify=0;
 		uint8_t ch=0;
-
 		for (int profile=0;profile<PROFILE_TOTAL_NUM;profile++){	//for each profile
 			for (int j=0;j<gl_profile_tab[profile].char_num_total;j++,ch++){ //for each char in this profile
 				if(gl_char[ch].is_notify){	//is char notifying
@@ -1289,6 +1067,10 @@ void notify_task_optimized( void* arg) {
 							}else{
 								esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
 										gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+								printf("Notified this: \n");
+								print_array(gl_char[ch].char_val->attr_value ,gl_char[ch].char_val->attr_len/2);
+								//realloc(j==0 ? raw_ptr0:raw_ptr1,0);
+								//free(j==0 ? raw_ptr0:raw_ptr1);
 							}
 						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT){
 							//verify if batery level changed and notify
@@ -2241,8 +2023,12 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         	gl_char[i].is_notify = false;
 		}
         esp_ble_gap_start_advertising(&adv_params);
+#ifdef EN_SENSOR0
         max30102_shutdown(I2C_NUM_0);	//shutdown sensor
+#endif
+#ifdef EN_SENSOR1
         max30102_shutdown(I2C_NUM_1);	//shutdown sensor
+#endif
         break;
     case ESP_GATTS_CONF_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
@@ -3148,7 +2934,7 @@ void bt_main(){
 		}
 	}
 
-	esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(FIFO_A_FULL *2 + 3);//Define MTU size 60 bytes + 1 byte op_code + 2 byte handle
+	esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(FIFO_A_FULL *PACKS_TO_SEND + 3);//Define MTU size 60 bytes + 1 byte op_code + 2 byte handle
 	if (local_mtu_ret){
 		ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
 	}
