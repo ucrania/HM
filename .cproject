@@ -45,6 +45,7 @@
 								<option id="gnu.cpp.compiler.option.include.paths.1428970215" name="Include paths (-I)" superClass="gnu.cpp.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM"/>
 									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM/build/max30102"/>
+									<listOptionValue builtIn="false" value="/home/pi/eclipse-workspace/HM/main"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.142896415" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
 							</tool>
