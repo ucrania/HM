@@ -1,16 +1,19 @@
+//todo fazer diagrama
+//todo meter a piscar o led conforme as fases em que o codigo está.
 //todo corrigir double advertising
+//todo fazer verificaçao para nao notificar dados repetidos
+//*******************+/-feito***********************
 //todo organizar o codigo com handlers
 //todo enviar raw data com pacotes de tamanho variavel
 //todo fazer processamento dos dados
-//todo fazer verificaçao para nao notificar dados repetidos
-//*******************+/-feito************
 //todo desligar o sensor e ligar so quando o ble for conectado?! para poupar energy
 //todo enviar notify a dizer que o sensor foi desconectado
 //todo falar com o stor, meter a chamar optimized task aqui, ou meter suspend task e resume quando tiver os dados
 //todo resolver a media de ter de meter 2x o dedo no sensor
 
+
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
-//#define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
+#define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
 #define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
 
 #define EN_BLE_TASK					//enable bluetooth
@@ -18,15 +21,16 @@
 #define EN_NOTIFY					//enable notify task
 #define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 #define PLOT 						//disables other printf
+//#define PRINT_ALL_SENSOR_DATA 	//prints all fifo data
 
-#include "algorithm_IK_C.h"
-#include "defines.h"
 //#include "algorithm_by_RF.h"
 //#include "algorithm_IK_C.h"
 //#include "algorithm_by_RF.cpp"
+
+#include "defines.h"
+#include "algorithm_IK_C.h"
 #define TRESHOLD_ON 15000
 
-#define PACKS_TO_SEND 8	//max17 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
 static uint16_t RAW0_str[FIFO_A_FULL/2],RAW1_str[FIFO_A_FULL/2];				//RAW1,RAW2
 static bool sensor_have_finger[2]; //flag for finger presence on sensor
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
@@ -108,6 +112,18 @@ void app_main()
 	char7_RAW1_val.attr_value = raw_ptr0_IR;
 	char8_RAW2_val.attr_value = raw_ptr1_IR;
 
+	/*float SPO2_value=99.87654321;
+	int32_t spo2_32;
+	spo2_32 = memcpy(&spo2_32,&SPO2_value,sizeof(float));
+	short spo_aux;
+	spo_aux    =  ((spo2_32 & 0x7fffffff) >> 13) - (0x38000000 >> 13);
+	spo_aux    |= ((spo2_32 & 0x80000000) >> 16);
+	printf("spo_aux = %d\t= 0x%x\n",spo_aux,spo_aux);
+
+	spo_aux    =  ((spo2_32 & 0x7fffffff) >> 13) - (0x38000000 >> 13);
+	spo_aux    |= ((spo2_32 & 0x80000000) >> 16);
+	//printf("spo_aux = 0x%x\n",spo_aux);
+	return;*/
 
 #ifdef EN_BATTERY_MEASURMENT_TASK
 
@@ -171,7 +187,7 @@ if (port == I2C_NUM_0){ //if sensor0
 	if(*buffer_pos >= 0){
 		raw_ptr0_IR = realloc(raw_ptr0_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
 		raw_ptr0_RED = realloc(raw_ptr0_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
-		ESP_LOGI("reallocated"," %d bytes\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+		ESP_LOGI("reallocated"," %d bytes\tsensor: %d\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1),port);
 		memcpy(raw_ptr0_IR+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
 		memcpy(raw_ptr0_RED+(sizeof(RAWsensorDataRED)*(*buffer_pos)),RAWsensorDataRED,sizeof(RAWsensorDataRED));
 		//print_array(raw_ptr0,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
@@ -181,11 +197,10 @@ if (port == I2C_NUM_0){ //if sensor0
 	if(*buffer_pos >= 0){
 		raw_ptr1_IR = realloc(raw_ptr1_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
 		raw_ptr1_RED = realloc(raw_ptr1_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
-		ESP_LOGI("reallocated","%d bytes\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+		ESP_LOGI("reallocated","%d bytes\tsensor: %d\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1),port);
 		memcpy(raw_ptr1_IR+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
 		memcpy(raw_ptr1_RED+(sizeof(RAWsensorDataRED)*(*buffer_pos)),RAWsensorDataRED,sizeof(RAWsensorDataRED));
 		//print_array(raw_ptr1,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
-
 	}
 }
 if (notify_TaskHandle != NULL){
@@ -209,6 +224,7 @@ if(*buffer_pos > 0){//ignore 1st read
 	}
 	if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
 		float SPO2_value=0;
+
 		int32_t HR_value=0,data_len= (sizeof(RAW0_str)*(int)(*buffer_pos)/2); //data lenght
 		float ratio,correl;
 		int8_t spo2_valid, hr_valid;
@@ -217,11 +233,40 @@ if(*buffer_pos > 0){//ignore 1st read
 		uint16_t *raw_ptr_aux0_IR=raw_ptr0_IR,*raw_ptr_aux0_RED = raw_ptr0_RED
 				,*raw_ptr_aux1_IR=raw_ptr1_IR,*raw_ptr_aux1_RED = raw_ptr1_RED;
 		for(int i=0;i<data_len;i++){ //convert data to 32bit pointer
-			IRdata_to_process [i]= raw_ptr_aux1_IR[i];
-			REDdata_to_process[i]= raw_ptr_aux1_RED[i];
+			if (port == I2C_NUM_0){//todo optimizar com ponteiros estes ifs
+				IRdata_to_process [i]= raw_ptr_aux0_IR[i];
+				REDdata_to_process[i]= raw_ptr_aux0_RED[i];
+			}else{
+				IRdata_to_process [i]= raw_ptr_aux1_IR[i];
+				REDdata_to_process[i]= raw_ptr_aux1_RED[i];
+			}
 		}
 		heart_rate_and_oxygen_saturation(IRdata_to_process,data_len,REDdata_to_process,&SPO2_value,&spo2_valid,&HR_value,&hr_valid,&ratio,&correl);
-		ESP_LOGI("Processamento","HR: %d\tSPO2: %f\n",HR_value,SPO2_value);
+
+		if(spo2_valid && hr_valid){
+			ESP_LOGW("Processamento","HR: %d\tSPO2: %f\n",HR_value,SPO2_value);
+			uint32_t spo2_32;
+			uint16_t spo2_16;
+			uint8_t *spo2_8;
+			memcpy(&spo2_32,&SPO2_value,sizeof(float));
+			//passing from float32 to float16 and assigning in the array
+			spo2_16    =  ((spo2_32 & 0x7fffffff) >> 13) - (0x38000000 >> 13);
+			spo2_16    |= ((spo2_32 & 0x80000000) >> 16);
+			spo2_8 = &spo2_16;
+
+			//PLX2_str[1]=SPO2_value;
+			if (port == I2C_NUM_0){
+				HR1_str[1]=HR_value;
+				PLX1_str[1]=spo2_8[0];
+				PLX1_str[2]=spo2_8[1];
+			}else{
+				HR2_str[1]=HR_value;
+				PLX2_str[1]=spo2_8[0];
+				PLX2_str[2]=spo2_8[1];
+			}
+		}else{
+			ESP_LOGE("Processamento","HR: %d\tSPO2: %f\n",HR_value,SPO2_value);
+		}
 		char7_RAW1_val.attr_value=raw_ptr0_IR;
 		char8_RAW2_val.attr_value=raw_ptr1_IR;
 		char7_RAW1_val.attr_len = sizeof(RAW0_str)*(int)(*buffer_pos);	//attribute lenght in bytes
@@ -258,11 +303,11 @@ void blink_task(void* arg)
 
 void isr_task_manager(void* arg)
 {
-	ESP_LOGI("ISR_TASK_MANAGER","on core %d ",xPortGetCoreID());
+	ESP_LOGI("ISR_TASK_MANAGER","on core %d\tpin: %d",xPortGetCoreID(),(int)arg);
 	uint8_t data=0x00;
 	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
-	max30102_read_reg(REG_INTR_STATUS_1,port,&data);
+	max30102_read_reg(REG_INTR_STATUS_1,port,&data); //clear interruption in the sensor
 
 	bool fifo_a_full_int = data>>7 & 0x01;
 	bool prox_int = data>>4 & 0x01;
@@ -282,11 +327,9 @@ void isr_task_manager(void* arg)
 		max30102_write_reg(REG_INTR_ENABLE_1,port, FIFO_A_FULL_EN);	//0b1000 0000 //disable prox interrupt and enable fifo_a_full
 	}
 
-
 	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
 	xTaskCreate(i2c_task_1, "i2c_task_1", 1024 * 4, (void* ) port, 10, NULL);	//4kB stack size
 	vTaskDelete(NULL);
-
 }
 
 esp_err_t max30102_write_reg(uint8_t uch_addr, i2c_port_t i2c_num, uint8_t puch_data){
@@ -381,7 +424,9 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16
 		sensorDataIR[i]  =sensorDataIR[i]  >>2;
 #endif*/
 		//fprintf(stdout,"%x, %x, %x\t%x, %x, %x\n",LED_1[i][0],LED_1[i][1],LED_1[i][2],LED_2[i][0],LED_2[i][1],LED_2[i][2]);
+#ifdef PRINT_ALL_SENSOR_DATA
 		fprintf(stdout,"0x%x\t0x%x\n",sensorDataRED[i],sensorDataIR[i]);
+#endif
 	}
 
 
@@ -2861,6 +2906,12 @@ uint8_t get_n_notify(){
 		}
 	}
 	return n_notify;
+}
+
+void print_array(uint8_t *array,uint16_t size){
+	for (int  i= 0;  i< size; i++) {
+		printf("array[%d]=0x%x\n",i,array[i]);
+	}
 }
 
 

@@ -43,7 +43,7 @@
 #include "nvs_flash.h"
 
 
-
+#define PACKS_TO_SEND 6	//max17 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
 #define GATT_MAX_APPS 16//todo ver se faz algo: nao faz nada
 
 #define REG_INTR_STATUS_1 0x00
@@ -253,9 +253,5 @@ void data_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms
 void data_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
 void print_array(uint8_t *array,uint16_t size);
 void bt_main();
-void print_array(uint8_t *array,uint16_t size){
-	for (int  i= 0;  i< size; i++) {
-		printf("array[%d]=0x%x\n",i,array[i]);
-	}
-}
+
 #endif /* MAIN_DEFINES_H_ */
