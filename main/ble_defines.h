@@ -14,7 +14,7 @@
 //#define TEST_DEVICE_NAME            "HM_BLE_Calil"
 
 #define CHAR2_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
-#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_PRESENT 	 	| RR_INTERVAL_NOT_PRESENT
+#define CHAR5_FLAGS			HEART_RATE_8BIT | SENSOR_CONTACT_NOT_DETECTED | ENERGY_EXPENDED_NOT_PRESENT | RR_INTERVAL_NOT_PRESENT
 
 #define CHAR3_FLAGS			0x0
 #define CHAR6_FLAGS			0x0
@@ -25,11 +25,11 @@ static bool notify_task_running = false;
 
 uint8_t *raw_ptr0_IR,*raw_ptr0_RED,*raw_ptr1_IR,*raw_ptr1_RED;
 static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:
-static uint8_t HR1_str[] = {CHAR2_FLAGS,111,0,100,0};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
-static uint8_t PLX1_str[] = {CHAR3_FLAGS,98,0,0,0};		//Pulse Measurement , value: 99 , 11-> data for testing
+static uint8_t HR1_str[] = {CHAR2_FLAGS,0,0,100,0};	//Heart Rate, value: 111bpm , ->3601 Kj expended Energy
+static uint8_t PLX1_str[] = {CHAR3_FLAGS,0,0,0,0};		//Pulse Measurement , value: 99 , 11-> data for testing
 static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
-static uint8_t HR2_str[] = {CHAR5_FLAGS,222,3602&0x0F,3602&0xF0,0}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
-static uint8_t PLX2_str[] = {CHAR6_FLAGS,99,0,0,0};		//Pulse Measurement
+static uint8_t HR2_str[] = {CHAR5_FLAGS,0,3602&0x0F,3602&0xF0,0}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
+static uint8_t PLX2_str[] = {CHAR6_FLAGS,0,0,0,0};		//Pulse Measurement
 static uint8_t BAT_str[] = {69};								//Battery level %
 
 esp_attr_value_t char1_BL_val = {

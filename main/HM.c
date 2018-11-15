@@ -179,11 +179,16 @@ void i2c_task_1(void* arg)
 printf("Start i2c_task_1!\n");
 #endif
 int *buffer_pos;
+uint8_t *raw_pptr_IR,*raw_pptr_RED;
+raw_pptr_IR =  malloc(FIFO_A_FULL);
+raw_pptr_RED = malloc(FIFO_A_FULL);
 i2c_port_t port = (i2c_port_t)arg;	//I2C_NUM_0 or I2C_NUM_1
 uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
 max30102_read_fifo(port, RAWsensorDataRED,RAWsensorDataIR);
 if (port == I2C_NUM_0){ //if sensor0
 	buffer_pos = &buffer_pos_s0;
+	raw_pptr_IR  = raw_ptr0_IR;
+	raw_pptr_RED = raw_ptr0_RED;
 	if(*buffer_pos >= 0){
 		raw_ptr0_IR = realloc(raw_ptr0_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
 		raw_ptr0_RED = realloc(raw_ptr0_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
@@ -194,6 +199,8 @@ if (port == I2C_NUM_0){ //if sensor0
 	}
 }else{
 	buffer_pos = &buffer_pos_s1;
+	raw_pptr_IR  = raw_ptr1_IR;
+	raw_pptr_RED = raw_ptr1_RED;
 	if(*buffer_pos >= 0){
 		raw_ptr1_IR = realloc(raw_ptr1_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
 		raw_ptr1_RED = realloc(raw_ptr1_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
@@ -203,6 +210,13 @@ if (port == I2C_NUM_0){ //if sensor0
 		//print_array(raw_ptr1,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
 	}
 }
+/*if(*buffer_pos >= 0){
+	raw_pptr_IR = realloc(raw_ptr0_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
+	raw_pptr_RED = realloc(raw_ptr0_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
+	ESP_LOGI("reallocated"," %d bytes\tsensor: %d\n",sizeof(RAWsensorDataIR)*(*buffer_pos+1),port);
+	memcpy(raw_pptr_IR+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
+	memcpy(raw_pptr_RED+(sizeof(RAWsensorDataRED)*(*buffer_pos)),RAWsensorDataRED,sizeof(RAWsensorDataRED));
+}*/
 if (notify_TaskHandle != NULL){
 	*buffer_pos +=1;
 }
@@ -291,14 +305,13 @@ void blink_task(void* arg)
 	gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
 	printf("Start blinking\n");
 	int led = 1,i=0;
-
+	int delay = 1000/((int)arg);
 	while(1){
 		//printf("Blink\t%d\n",i++);
 		gpio_set_level(BLINK_GPIO, led=!led);
-		vTaskDelay(pdMS_TO_TICKS(1000));
+		vTaskDelay(pdMS_TO_TICKS(delay));
 	}
 	vTaskDelete(NULL);
-
 }
 
 void isr_task_manager(void* arg)
@@ -1975,6 +1988,11 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 		ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT");
 		for (int i = 0; i < GATTS_CHAR_NUM_TOTAL; i++) {//disable all notify
 			gl_char[i].is_notify = false;
+			if(gl_char[i].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_HR ||
+			   gl_char[i].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_PLX
+			){
+				gl_char[i].char_val->attr_value[1]=0;
+			}
 		}
 		esp_ble_gap_start_advertising(&adv_params);
 #ifdef EN_SENSOR0
