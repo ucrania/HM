@@ -30,7 +30,7 @@ static uint8_t PLX1_str[] = {CHAR3_FLAGS,0,0,0,0};		//Pulse Measurement , value:
 static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
 static uint8_t HR2_str[] = {CHAR5_FLAGS,0,3602&0x0F,3602&0xF0,0}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
 static uint8_t PLX2_str[] = {CHAR6_FLAGS,0,0,0,0};		//Pulse Measurement
-static uint8_t BAT_str[] = {69};								//Battery level %
+static uint8_t BAT_str[] = {100};								//Battery level %
 
 esp_attr_value_t char1_BL_val = {
 	.attr_max_len = 22,

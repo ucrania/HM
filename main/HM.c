@@ -1,3 +1,4 @@
+//update over the air
 //todo fazer diagrama
 //todo meter a piscar o led conforme as fases em que o codigo está.
 //todo corrigir double advertising
@@ -1992,6 +1993,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 			   gl_char[i].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_PLX
 			){
 				gl_char[i].char_val->attr_value[1]=0;
+				gl_char[i].char_val->attr_value[2]=0;
 			}
 		}
 		esp_ble_gap_start_advertising(&adv_params);
