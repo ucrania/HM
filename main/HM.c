@@ -1,4 +1,11 @@
-//update over the air
+//todo detetar quantos sensores conectados temos
+//todo ha ruido no divisor de tensao ao detetar carga/discarga, como fazer?
+//todo perguntar como implemento zona critica do codigo enterCritical()
+//todo fazer estudo e subtrair offset da bateria quando esta em carga
+//todo Ler VUSB para saber o estado do carregamento
+//todo adicionar a caracteristica Power state  0x2A1A
+//todo fazer circuito para converter 0-5V para 0
+//todo negocio de emparelhar
 //todo fazer diagrama
 //todo meter a piscar o led conforme as fases em que o codigo está.
 //todo corrigir double advertising
@@ -32,8 +39,11 @@
 #include "algorithm_IK_C.h"
 #define TRESHOLD_ON 15000
 
+static esp_err_t sensor_detected[2] = {ESP_FAIL,ESP_FAIL}; //initialise as not detected
 static uint16_t RAW0_str[FIFO_A_FULL/2],RAW1_str[FIFO_A_FULL/2];				//RAW1,RAW2
 static bool sensor_have_finger[2]; //flag for finger presence on sensor
+static bool battery_lvl_changed=true;
+static bool battery_status_changed=true;
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
 
 TaskHandle_t notify_TaskHandle = NULL;
@@ -46,7 +56,76 @@ TaskHandle_t notify_TaskHandle = NULL;
 
 static xQueueHandle gpio_evt_queue = NULL;
 
+static float getBattPercentage(int32_t vbati){
+	float battLvl =0.0;// ((vbat-MIN_BATT_V)/(MAX_BATT_V - MIN_BATT_V))*100;
+	float vbat = (float)vbati/1000;
+	int plist[] = {100,95,84,74,60,51,37,18,9,3,1};
+	float vbat_aux=4.2;
+	if(vbat>4.3){
+		battLvl = 100.0;
+	}else if(vbat>4.2){
+		battLvl = 101.0;
+	}else if(vbat<3.1){
+		battLvl = 0;
+	}else{
+		for (int i=0;vbat_aux>3.1;vbat_aux-=0.1,i++){
+//			printf("vbat_aux = %f\t vbat = %f\n",vbat_aux,vbat);
+//			printf("plist[i] = %d\t plist[i+1] = %d\n",plist[i],plist[i+1]);
 
+			if(vbat<vbat_aux && vbat>=vbat_aux-0.1){
+				battLvl = plist[i+1]+(vbat-(vbat_aux-.1))*(plist[i]-plist[i+1])*10;
+				break;
+			}
+		}
+	}
+
+	/*if(vbat>4.2){
+		battLvl = 100.0;
+	}
+	else if(vbat<4.2 && vbat >=4.1){
+
+	}else if(vbat<4.1 && vbat >=4.0){
+
+	}else if(vbat<4.0 && vbat >=3.9){
+
+	}else if(vbat<3.9 && vbat >=3.8){
+
+	}else if(vbat<3.8 && vbat >=3.7){
+
+	}else if(vbat<3.7 && vbat >=3.6){
+
+	}else if(vbat<3.6 && vbat >=3.5){
+
+	}else if(vbat<3.5 && vbat >=3.4){
+
+	}else{
+
+	}*/
+
+	return  battLvl;
+}
+static float getBattVoltage(){
+	uint32_t adc_reading = 0;
+	//Multisampling
+	for (int i = 0; i < NO_OF_SAMPLES; i++) {
+		if (unit == ADC_UNIT_1) {
+			adc_reading += adc1_get_raw((adc1_channel_t)channel);
+		} else {
+			int raw;
+			adc2_get_raw((adc2_channel_t)channel, ADC_WIDTH_BIT_12, &raw);
+			adc_reading += raw;
+		}
+	}
+	adc_reading /= NO_OF_SAMPLES;
+	//Convert adc_reading to voltage in mV
+	uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
+
+	return (float) voltage/.72; //divide by resistence proporcion 1/(100k/(100k+39k))
+}
+static bool getBattState(){
+	//read GPIO37 - 1 if charging, 0 if not
+	return gpio_get_level(GPIO_NUM_37);
+}
 static void i2c_init(i2c_port_t i2c_num){
 	i2c_config_t conf;
 	conf.mode = I2C_MODE_MASTER;
@@ -65,20 +144,31 @@ static void i2c_init(i2c_port_t i2c_num){
 			I2C_RX_BUF_DISABLE,
 			I2C_TX_BUF_DISABLE, 0);
 }
-static void max30102_shutdown(i2c_port_t i2c_num){
-	uint8_t data_h=0x00;
-	max30102_read_reg(REG_MODE_CONFIG,i2c_num, &data_h);
-	max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x80 | data_h);	//shutdown and keep the same mode
+static esp_err_t max30102_shutdown(i2c_port_t i2c_num){
+	esp_err_t ret;
+	uint_fast8_t data_h=0x00;
+	uint_fast8_t i=0;
+	do{
+		max30102_read_reg(REG_MODE_CONFIG,i2c_num, &data_h);
+		ret = max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x80 | data_h);	//shutdown and keep the same mode
+	}while(ret != ESP_OK && i<100); //try to connect 100 times
+	return ret;
 }
-static void max30102_reset(i2c_port_t i2c_num){
-	uint8_t data_h=0x00;
-	max30102_read_reg(REG_INTR_STATUS_1,i2c_num,&data_h);//clear interrupt pin
-	int ret = max30102_read_reg(REG_MODE_CONFIG, i2c_num, &data_h);
-	max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x40 | data_h);	//reset and keep the same mode
+static esp_err_t max30102_reset(i2c_port_t i2c_num){
+	uint_fast8_t data_h=0x00;
+	esp_err_t ret;
+	uint_fast8_t i=0;
+	do{
+		max30102_read_reg(REG_INTR_STATUS_1,i2c_num,&data_h);//clear interrupt pin
+		max30102_read_reg(REG_MODE_CONFIG, i2c_num, &data_h);
+		ret = max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x40 | data_h);	//reset and keep the same mode
+	}while(ret != ESP_OK && i<100); //try to connect 100 times
+	return ret;
 }
-static void max30102_init(i2c_port_t i2c_num){
+static esp_err_t max30102_init(i2c_port_t i2c_num){
 	printf("***MAX30102 initialization***\n");
-	int ret;
+	esp_err_t ret;
+	uint_fast8_t i=0;
 	do{
 		ret = max30102_write_reg(REG_INTR_ENABLE_1,i2c_num, PROX_INT_EN );	//0b1001 0000
 		max30102_write_reg(REG_INTR_ENABLE_2,i2c_num,0x00);		//Temperature interrupt
@@ -92,15 +182,40 @@ static void max30102_init(i2c_port_t i2c_num){
 		max30102_write_reg(REG_LED2_PA,i2c_num,get_LED2_PA());			//IR  LED current
 		max30102_write_reg(REG_PILOT_PA,i2c_num,get_LED1_PA());		//Multimode registers (not used)
 		max30102_write_reg(REG_PROX_INT_THRESH,i2c_num,0x30);
-	}while(ret != ESP_OK);
+	}while(ret != ESP_OK && i<100); //try to connect 100 times
+	return ret;
+}
+
+static void adc_init(){
+
+	//Configure ADC
+	if (unit == ADC_UNIT_1) {
+		adc1_config_width(ADC_WIDTH_BIT_12);
+		adc1_config_channel_atten(channel, atten);
+	}
+
+	//Characterize ADC
+	adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
+	esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
+	//print_char_val_type(val_type);
+	gpio_set_direction(GPIO_NUM_37,GPIO_MODE_INPUT); //gpio used to read charging state
+
 }
 
 static void IRAM_ATTR gpio_isr_handler(void* arg){
 	uint32_t gpio_num = (uint32_t) arg;
 	//printf("INTERRUPTION on pin %d",(int)arg);
-	xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 2, (void* ) arg, 10, NULL);
-
-	//xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+	switch ((uint32_t)arg) {
+	case INT_PIN_0:
+	case INT_PIN_1:
+		xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 2, (void* ) arg, 10, NULL);
+		break;
+	case INT_PIN_2:
+		xTaskCreate(batt_state_task,"batt_task",	1024*4, (void*) arg, 10 , NULL);
+		break;
+	default:
+		break;
+	}
 }
 
 
@@ -127,27 +242,32 @@ void app_main()
 	return;*/
 
 #ifdef EN_BATTERY_MEASURMENT_TASK
-
+	adc_init();
+	is_charging = gpio_get_level(GPIO_NUM_37);
+	ESP_LOGI("Bat_state","%s",is_charging?"Charging":"NOT Charging");
 #endif
-#ifdef EN_BLE_TASK
-	bt_main();
-#ifndef CONFIG_BT_ENABLED
-	esp_light_sleep_start();
-#endif //CONFIG_BT_ENABLED
-#endif //EN_BLE_TASK
 
 #ifdef EN_MAX30102_READING_TASK
 	printf("Start app_main\n");
 	intr_init();
 #ifdef EN_SENSOR0
 	i2c_init(I2C_NUM_0);
-	max30102_shutdown(I2C_NUM_0);
+	sensor_detected[0] = max30102_shutdown(I2C_NUM_0);
+	ESP_LOGI("Sensor 0","%s",sensor_detected[0]==ESP_OK ? "Detected" : "NOT Detected");
 #endif
 #ifdef EN_SENSOR1
 	i2c_init(I2C_NUM_1);
-	max30102_shutdown(I2C_NUM_1);
+	sensor_detected[1] = max30102_shutdown(I2C_NUM_1);
+	ESP_LOGI("Sensor 1","%s",sensor_detected[1]==ESP_OK ? "Detected" : "NOT Detected");
 #endif
 #endif
+
+#ifdef EN_BLE_TASK
+	bt_main();
+#ifndef CONFIG_BT_ENABLED
+	esp_light_sleep_start();
+#endif //CONFIG_BT_ENABLED
+#endif //EN_BLE_TASK
 	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
 	//xTaskCreate(i2c_task_1, "i2c_test_task_1", 1024 * 2, (void* ) 0, 10, NULL);
 	//xTaskCreate(blink_task, "blink_task"	 , 1024 * 2, (void* ) 0, 10, NULL);
@@ -346,6 +466,37 @@ void isr_task_manager(void* arg)
 	vTaskDelete(NULL);
 }
 
+void batt_state_task(void* arg)
+{
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
+	printf("Batt_task int_pin: %d on core %d\n",(int)arg,xPortGetCoreID());
+	battery_status_changed=true;
+	is_charging = gpio_get_level(GPIO_NUM_37);
+	printf("%s\n",is_charging?"Start Charging":"Not Charging");
+	BAT_state_str[0] = BATT_STATE_PRESENT|BATT_STATE_DISCHARGING|BATT_STATE_NOT_CHARGING|BATT_STATE_GOOD_LEVEL;
+	//BAT_state_str[0] = 0x03|(0x03<<2)|(0x02<<4)|(0x00<<6) | (is_charging << 5);
+	if(is_charging){
+		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_NEGEDGE);	//interrupt on falling edge
+	}else{
+		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_POSEDGE);	//interrupt on rising edge
+	}
+
+	/*//taskENTER_CRITICAL(NULL);
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
+	float battV   = getBattVoltage();			//battery voltage
+	float battLvl = getBattPercentage(battV); 	//battery percentage
+
+	printf("BattV: %.2fmV\t",battV);
+	printf("Lvl: %.2f%%\n",battLvl);
+
+	vTaskDelay(5 / portTICK_RATE_MS);
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);
+	//portEXIT_CRITICAL(NULL);*/
+	//gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//interrupt disable //todo remove this line to make charging state
+	vTaskDelete(NULL);
+
+}
+
 esp_err_t max30102_write_reg(uint8_t uch_addr, i2c_port_t i2c_num, uint8_t puch_data){
 
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -452,7 +603,7 @@ esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16
 	return ret;
 }
 
-void check_ret(int ret,uint8_t sensor_data_h){
+void check_ret(esp_err_t ret,uint8_t sensor_data_h){
 	if(ret == ESP_ERR_TIMEOUT) {
 		printf("I2C timeout\n");
 	} else if(ret == ESP_OK) {
@@ -633,20 +784,23 @@ void intr_init(){
 	gpio_config_t io_conf;
 	io_conf.intr_type = GPIO_PIN_INTR_NEGEDGE;		//interrupt of falling edge
 	io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;		//bit mask of the pins, use GPIO25/26 here
-	io_conf.mode = GPIO_MODE_INPUT;				//set as input mode
+	io_conf.mode = GPIO_MODE_INPUT;					//set as input mode
 	io_conf.pull_down_en = 0;						//disable pull-down mode
-	io_conf.pull_up_en = 1;						//enable pull-up mode
+	io_conf.pull_up_en = 1;							//enable pull-up mode
 	gpio_config(&io_conf);
 	//gpio_set_intr_type(INT_PIN_0, GPIO_INTR_NEGEDGE);	//interrupt of falling edge
-	//gpio_set_intr_type(INT_PIN_1, GPIO_INTR_NEGEDGE);	//interrupt of falling edge
 	rtc_gpio_pullup_en(INT_PIN_0);
 	rtc_gpio_pullup_en(INT_PIN_1);
 	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);		//install gpio isr service
 	gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
 	gpio_isr_handler_add(INT_PIN_1, gpio_isr_handler, (void*) INT_PIN_1);	//hook isr handler for specific gpio pin
-
-
-	esp_sleep_enable_ext1_wakeup(GPIO_INPUT_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up by pin 34 and 35
+#ifdef EN_BATTERY_MEASURMENT_TASK
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);	//interrupt of falling edge
+	gpio_isr_handler_add(INT_PIN_2, gpio_isr_handler, (void*) INT_PIN_2);	//hook isr handler for specific gpio pin
+	rtc_gpio_pullup_dis(INT_PIN_2);
+	rtc_gpio_pulldown_en(INT_PIN_2);
+#endif
+	esp_sleep_enable_ext1_wakeup(GPIO_WAKEUP_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up by pin 34 and 35
 }
 
 double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
@@ -1011,10 +1165,30 @@ static struct gatts_char_inst gl_char[] = {
 		},
 		{		//8 Battery level
 				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_BAT,
+				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_BAT_LVL,
 				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
 				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
-				.char_val = &char9_BAT_val,
+				.char_val = &char9_BAT_lvl_val,
+				.char_control=NULL,
+				.char_handle =0,
+				.char_read_callback=char6_read_handler,
+				.char_write_callback=char6_write_handler,
+				.descr_uuid.len = ESP_UUID_LEN_16,
+				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
+				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.descr_val = &gatts_demo_descr1_val,
+				.descr_control=NULL,
+				.descr_handle=0,
+				.descr_read_callback=descr6_read_handler,
+				.descr_write_callback=descr6_write_handler,
+				.is_notify = false
+		},
+		{		//9 Battery State
+				.char_uuid.len = ESP_UUID_LEN_16,  // TX
+				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_BAT_POWER_STATE,
+				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
+				.char_val = &char10_BAT_state_val,
 				.char_control=NULL,
 				.char_handle =0,
 				.char_read_callback=char6_read_handler,
@@ -1055,10 +1229,20 @@ void notify_task_optimized( void* arg) {
 								//realloc(j==0 ? raw_ptr0:raw_ptr1,0);
 								//free(j==0 ? raw_ptr0:raw_ptr1_IR);
 							}
-						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT){
-							//verify if batery level changed and notify
-							esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[j],
-									gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT_LVL){ //if battery characteristic
+							//verify if battery level changed and notify
+							if(battery_lvl_changed){
+								esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[0],
+										gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+								battery_lvl_changed=false;
+							}
+						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT_POWER_STATE){
+							//verify if battery status changed and notify
+							if(battery_status_changed){
+								esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
+										gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+								battery_status_changed=false;
+							}
 						}
 						break;
 					default:
@@ -1822,23 +2006,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
 		esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[profile].service_id, GATTS_NUM_HANDLE_HR);
 
-		esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(TEST_DEVICE_NAME);
-		if (set_dev_name_ret){
-			ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
-		}
 
-		//config adv data
-		esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
-		if (ret){
-			ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
-		}
-		adv_config_done |= adv_config_flag;
-		//config scan response data
-		ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
-		if (ret){
-			ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
-		}
-		adv_config_done |= scan_rsp_config_flag;
 
 		break;
 
@@ -2595,7 +2763,7 @@ if (!notify_task_running){
 		ESP_LOGI(GATTS_TAG, "CREATE_SERVICE_EVT, status %d,  service_handle %d\n", param->create.status, param->create.service_handle);
 		gl_profile_tab[profile].service_handle = param->create.service_handle;
 		gl_profile_tab[profile].char_uuid.len = ESP_UUID_LEN_16;
-		gl_profile_tab[profile].char_uuid.uuid.uuid16 = gl_char[5].char_uuid.uuid.uuid16;
+		gl_profile_tab[profile].char_uuid.uuid.uuid16 = gl_char[6].char_uuid.uuid.uuid16;
 
 		esp_ble_gatts_start_service(gl_profile_tab[profile].service_handle);
 		gatts_add_char(profile);
@@ -2702,12 +2870,21 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 		if (!param->write.is_prep){
 			ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, value len %d, value :", param->write.len);
 			esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
-			if (gl_profile_tab[profile].descr_handle == param->write.handle && param->write.len == 2){
+			if ((gl_profile_tab[profile].descr_handle == param->write.handle
+								|| gl_profile_tab[profile].descr_handle == param->write.handle+3)
+								&& param->write.len == 2){
 				uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
+				bool is_bat_level = (gl_profile_tab[profile].descr_handle == param->write.handle+3);
 				if (descr_value == 0x0001){
 					if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
 						ESP_LOGI(GATTS_TAG, "notify enable");
-						gl_char[8].is_notify = true;
+						if (is_bat_level){
+							gl_char[8].is_notify = true; 	//notify bat lvl
+							ESP_LOGW("DEBUG","BAT_LVL");
+						}else{
+							gl_char[9].is_notify = true;	//notify bat state
+							ESP_LOGW("DEBUG","BAT_STATE");
+						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
 							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
@@ -2732,7 +2909,11 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 				}
 				else if (descr_value == 0x0000){
 					ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
-					gl_char[8].is_notify = false;
+					if (is_bat_level){
+						gl_char[8].is_notify = false;
+					}else {
+						gl_char[9].is_notify = false;
+					}
 				}else{
 					ESP_LOGE(GATTS_TAG, "unknown descr value");
 					esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
@@ -2758,7 +2939,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 		ESP_LOGI(GATTS_TAG, "CREATE_SERVICE_EVT, status %d,  service_handle %d\n", param->create.status, param->create.service_handle);
 		gl_profile_tab[profile].service_handle = param->create.service_handle;
 		gl_profile_tab[profile].char_uuid.len = ESP_UUID_LEN_16;
-		gl_profile_tab[profile].char_uuid.uuid.uuid16 = gl_char[5].char_uuid.uuid.uuid16;
+		gl_profile_tab[profile].char_uuid.uuid.uuid16 = gl_char[8].char_uuid.uuid.uuid16;
 
 		esp_ble_gatts_start_service(gl_profile_tab[profile].service_handle);
 		gatts_add_char(profile);
@@ -2777,6 +2958,13 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 		}
 		if (gl_profile_tab[profile].char_num < gl_profile_tab[profile].char_num_total) {
 			gatts_add_char(profile);
+		}else{//organize the char handlers
+			for (int i = gl_profile_tab[profile].char_num_total-1; i >=0; i--) {
+
+				uint8_t base_handler = gl_profile_tab[profile].char_handle[0];
+				gl_profile_tab[profile].char_handle[i]= base_handler-((gl_profile_tab[profile].char_num_total-i-1)*3);
+				//printf("profile: %d\ti=%d\tchar_handler[i]=%d\n",profile,i,gl_profile_tab[profile].char_handle[i]);
+			}
 		}
 		break;
 	}
@@ -2899,6 +3087,24 @@ void bt_main(){
 		ESP_LOGE(GATTS_TAG, "gap register error, error code = %x", ret);
 		return;
 	}
+
+	ret = esp_ble_gap_set_device_name(TEST_DEVICE_NAME);
+	if (ret){
+		ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", ret);
+	}
+
+	//config adv data
+	ret = esp_ble_gap_config_adv_data(&adv_data);
+	if (ret){
+		ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
+	}
+	adv_config_done |= adv_config_flag;
+	//config scan response data
+	ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
+	if (ret){
+		ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
+	}
+	adv_config_done |= scan_rsp_config_flag;
 
 	for (int profile = 0; profile < PROFILE_TOTAL_NUM; profile++) {	//register all profiles
 		ret = esp_ble_gatts_app_register(profile);

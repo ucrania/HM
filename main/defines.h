@@ -117,7 +117,9 @@
 
 #define INT_PIN_0     			34				 //RTC GPIO used for interruptions
 #define INT_PIN_1     			35				 //RTC GPIO used for interruptions
-#define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
+#define INT_PIN_2     			37				 //RTC GPIO used for interruption when usb is connected
+#define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1) | (1ULL<<INT_PIN_2))
+#define GPIO_WAKEUP_PIN_SEL	((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
 #define ESP_INTR_FLAG_DEFAULT 0
 
 
@@ -187,6 +189,21 @@ uint8_t get_n_notify();
 #define DEVICE_AND_SENSOR_STATUS_PRESENT		0x08	//
 #define PULSE_AMPLITUDE_INDEX_PRESENT			0x10	//
 
+//*****Battery state defines *****//
+#define BATT_STATE_UNKNOWN 						0x00
+#define BATT_STATE_NOT_SUPPORTED				0x01
+#define BATT_STATE_NOT_PRESENT 					0x02
+#define BATT_STATE_PRESENT						0x03
+
+#define BATT_STATE_NOT_DISCHARGING				0x02<<2
+#define BATT_STATE_DISCHARGING					0x03<<2
+
+#define BATT_STATE_NOT_CHARGEABLE				0x01<<4
+#define BATT_STATE_NOT_CHARGING					0x02<<4
+#define BATT_STATE_CHARGING						0x03<<4
+
+#define BATT_STATE_GOOD_LEVEL					0x02<<6
+#define BATT_STATE_CRITICALY_LOW_LEVEL			0x03<<6
 
 //defined 1 profile for each service
 #define PROFILE_TOTAL_NUM 6		//TOTAL Profile number
@@ -202,7 +219,7 @@ uint8_t get_n_notify();
 #define GATTS_CHAR_NUM_HR2		2	//HR 	CHAR
 #define GATTS_CHAR_NUM_PLX2		1	//PULSE CHAR
 #define GATTS_CHAR_NUM_RAW		2	//HR 	Raw data
-#define GATTS_CHAR_NUM_BATT		1	//Battery level
+#define GATTS_CHAR_NUM_BATT		2	//Battery level
 #define GATTS_CHAR_NUM_TOTAL			(GATTS_CHAR_NUM_HR1 + GATTS_CHAR_NUM_PLX1)+ (GATTS_CHAR_NUM_HR2 + GATTS_CHAR_NUM_PLX2) + GATTS_CHAR_NUM_RAW + GATTS_CHAR_NUM_BATT	//TOTAL CHAR x2 sensors
 
 
@@ -220,29 +237,40 @@ uint8_t get_n_notify();
 #define GATTS_CHAR_UUID_RAW       0x2AFF					//Raw data characteristic uuid
 #define GATTS_NUM_HANDLE_RAW     	1+GATTS_CHAR_NUM_RAW*3
 
-#define GATTS_SERVICE_UUID_BATTERY_SERVICE   0x180F 	//Battery level Service uuid
-#define GATTS_CHAR_UUID_BAT       0x2A19					//Battery level characteristic uuid
+#define GATTS_SERVICE_UUID_BATTERY_SERVICE   	0x180F 	//Battery level Service uuid
+#define GATTS_CHAR_UUID_BAT_LVL    				0x2A19					//Battery level characteristic uuid
+#define GATTS_CHAR_UUID_BAT_POWER_STATE       	0x2A1A					//Battery Power State characteristic uuid
 #define GATTS_NUM_HANDLE_BAT     	1+GATTS_CHAR_NUM_BATT*3
 
 #define TEST_MANUFACTURER_DATA_LEN  17
 
 #define PREPARE_BUF_MAX_SIZE 1024
-
 //end ble defines
+//******ADC DEFINES******//
+#define DEFAULT_VREF    1100        //Use adc2_vref_to_gpio() to obtain a better estimate
+#define NO_OF_SAMPLES   64          //Multisampling
+static esp_adc_cal_characteristics_t *adc_chars;
+static const adc_channel_t channel = ADC_CHANNEL_0;     //pin GPIO 36
+//GPIO34 if ADC1, GPIO14 if ADC2
+static const adc_atten_t atten = ADC_ATTEN_DB_11;
+static const adc_unit_t unit = ADC_UNIT_1;
+static bool is_charging = false;
+//end ADC defines
 void i2c_task_0(void* arg);
 void i2c_task_1(void* arg);
 void blink_task(void* arg);
 void notify_task(void* arg);
 void notify_task_optimized(void* arg);
 void isr_task_manager(void* arg);
-void check_ret(int ret, uint8_t sensor_data_h);
+void batt_state_task(void* arg);
+void check_ret(esp_err_t ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
 esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);
 esp_err_t max30102_read_fifo(i2c_port_t i2c_num, uint16_t sensorDataRED[],uint16_t sensorDataIR[]);
-static void max30102_init(i2c_port_t i2c_num);
-static void max30102_reset(i2c_port_t i2c_num);
-static void max30102_shutdown(i2c_port_t i2c_num);
-void check_fifo(int ret,uint8_t sensor_data_h, uint8_t sensor_data_m, uint8_t sensor_data_l);
+static esp_err_t max30102_init(i2c_port_t i2c_num);
+static esp_err_t max30102_reset(i2c_port_t i2c_num);
+static esp_err_t max30102_shutdown(i2c_port_t i2c_num);
+void check_fifo(esp_err_t ret,uint8_t sensor_data_h, uint8_t sensor_data_m, uint8_t sensor_data_l);
 uint8_t get_SPO2_CONF_REG();
 uint8_t get_FIFO_CONF_REG();
 uint8_t get_LED1_PA();

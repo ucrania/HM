@@ -30,7 +30,9 @@ static uint8_t PLX1_str[] = {CHAR3_FLAGS,0,0,0,0};		//Pulse Measurement , value:
 static uint8_t body_location2_str[] = {WRIST};							 			//Body Location:
 static uint8_t HR2_str[] = {CHAR5_FLAGS,0,3602&0x0F,3602&0xF0,0}; 	//Heart Rate, value: 111bpm , ->3602 Kj expended Energy
 static uint8_t PLX2_str[] = {CHAR6_FLAGS,0,0,0,0};		//Pulse Measurement
-static uint8_t BAT_str[] = {100};								//Battery level %
+static uint8_t BAT_lvl_str[] = {99};								//Battery level %
+static uint8_t BAT_state_str[] = {BATT_STATE_PRESENT|BATT_STATE_DISCHARGING|BATT_STATE_NOT_CHARGING|BATT_STATE_GOOD_LEVEL};								//Battery state
+
 
 esp_attr_value_t char1_BL_val = {
 	.attr_max_len = 22,
@@ -78,12 +80,16 @@ esp_attr_value_t char8_RAW2_val = {
 	.attr_len		= FIFO_A_FULL,
 	.attr_value     = NULL,
 };
-esp_attr_value_t char9_BAT_val = {
+esp_attr_value_t char9_BAT_lvl_val = {
 	.attr_max_len = 22,
-	.attr_len		= sizeof(BAT_str),
-	.attr_value     = BAT_str,
+	.attr_len		= sizeof(BAT_lvl_str),
+	.attr_value     = BAT_lvl_str,
 };
-
+esp_attr_value_t char10_BAT_state_val = {
+	.attr_max_len = 22,
+	.attr_len		= sizeof(BAT_state_str),
+	.attr_value     = BAT_state_str,
+};
 
 static uint8_t descr1_str[] = {0,0};
 
