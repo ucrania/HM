@@ -251,6 +251,8 @@ uint8_t get_n_notify();
 #define NO_OF_SAMPLES   64          //Multisampling
 static esp_adc_cal_characteristics_t *adc_chars;
 static const adc_channel_t channel = ADC_CHANNEL_0;     //pin GPIO 36
+static const gpio_num_t adc_pin = GPIO_NUM_37;
+static const gpio_num_t adc_en_pin = GPIO_NUM_27;
 //GPIO34 if ADC1, GPIO14 if ADC2
 static const adc_atten_t atten = ADC_ATTEN_DB_11;
 static const adc_unit_t unit = ADC_UNIT_1;
@@ -263,6 +265,7 @@ void notify_task(void* arg);
 void notify_task_optimized(void* arg);
 void isr_task_manager(void* arg);
 void batt_state_task(void* arg);
+void batt_level_task(void* arg);
 void check_ret(esp_err_t ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
 esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);

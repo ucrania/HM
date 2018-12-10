@@ -47,6 +47,7 @@ static bool battery_status_changed=true;
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
 
 TaskHandle_t notify_TaskHandle = NULL;
+TaskHandle_t battery_TaskHandle = NULL;
 
 /*********************BLE DEFINES**************************************************************************************/
 #include "ble_defines.h"
@@ -108,13 +109,8 @@ static float getBattVoltage(){
 	uint32_t adc_reading = 0;
 	//Multisampling
 	for (int i = 0; i < NO_OF_SAMPLES; i++) {
-		if (unit == ADC_UNIT_1) {
-			adc_reading += adc1_get_raw((adc1_channel_t)channel);
-		} else {
-			int raw;
-			adc2_get_raw((adc2_channel_t)channel, ADC_WIDTH_BIT_12, &raw);
-			adc_reading += raw;
-		}
+		adc_reading += adc1_get_raw((adc1_channel_t)channel);
+		vTaskDelay(1 / portTICK_RATE_MS);
 	}
 	adc_reading /= NO_OF_SAMPLES;
 	//Convert adc_reading to voltage in mV
@@ -187,8 +183,10 @@ static esp_err_t max30102_init(i2c_port_t i2c_num){
 }
 
 static void adc_init(){
-
+	/*Initialize the ADC used in GPIO37
+	 * and GPIO27 used to enable/disable the ADC measurment (en/dis voltage divider)*/
 	//Configure ADC
+
 	if (unit == ADC_UNIT_1) {
 		adc1_config_width(ADC_WIDTH_BIT_12);
 		adc1_config_channel_atten(channel, atten);
@@ -198,8 +196,11 @@ static void adc_init(){
 	adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
 	esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
 	//print_char_val_type(val_type);
-	gpio_set_direction(GPIO_NUM_37,GPIO_MODE_INPUT); //gpio used to read charging state
+	gpio_set_direction(adc_pin,GPIO_MODE_INPUT); //gpio used to read charging state
 
+	gpio_pad_select_gpio(adc_en_pin);
+	gpio_set_direction(adc_en_pin, GPIO_MODE_OUTPUT);
+	gpio_set_level(adc_en_pin, 0);
 }
 
 static void IRAM_ATTR gpio_isr_handler(void* arg){
@@ -217,7 +218,6 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 		break;
 	}
 }
-
 
 void app_main()
 {
@@ -243,8 +243,7 @@ void app_main()
 
 #ifdef EN_BATTERY_MEASURMENT_TASK
 	adc_init();
-	is_charging = gpio_get_level(GPIO_NUM_37);
-	ESP_LOGI("Bat_state","%s",is_charging?"Charging":"NOT Charging");
+	//initialize battery state and battery level task
 #endif
 
 #ifdef EN_MAX30102_READING_TASK
@@ -467,18 +466,28 @@ void isr_task_manager(void* arg)
 }
 
 void batt_state_task(void* arg)
-{
-	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
+{	/*Runs when interruption on pin 37 is generated
+ 	 Reads GPIO37 and get state - Charging or not Charging*/
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//disable interrupt to prevent debouncing
 	printf("Batt_task int_pin: %d on core %d\n",(int)arg,xPortGetCoreID());
 	battery_status_changed=true;
 	is_charging = gpio_get_level(GPIO_NUM_37);
-	printf("%s\n",is_charging?"Start Charging":"Not Charging");
-	BAT_state_str[0] = BATT_STATE_PRESENT|BATT_STATE_DISCHARGING|BATT_STATE_NOT_CHARGING|BATT_STATE_GOOD_LEVEL;
+	ESP_LOGI("Bat_state","%s",is_charging?"Charging":"NOT Charging");
+	uint_fast8_t CHARGING_FLAG = is_charging ? BATT_STATE_CHARGING:BATT_STATE_NOT_CHARGING;
+	BAT_state_str[0] = BATT_STATE_PRESENT|BATT_STATE_DISCHARGING|CHARGING_FLAG|BATT_STATE_GOOD_LEVEL;
 	//BAT_state_str[0] = 0x03|(0x03<<2)|(0x02<<4)|(0x00<<6) | (is_charging << 5);
 	if(is_charging){
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_NEGEDGE);	//interrupt on falling edge
 	}else{
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_POSEDGE);	//interrupt on rising edge
+	}
+	if(battery_status_changed){
+		uint_fast8_t profile = PROFILE_BATT_APP_ID, ch = 9; //profile and char id for bat_state char
+		if(gl_char[ch].is_notify && notify_TaskHandle != NULL){ //if char is notify and notify task was created
+			esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
+					gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+			battery_status_changed=false;
+		}
 	}
 
 	/*//taskENTER_CRITICAL(NULL);
@@ -495,6 +504,47 @@ void batt_state_task(void* arg)
 	//gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//interrupt disable //todo remove this line to make charging state
 	vTaskDelete(NULL);
 
+}
+
+void batt_level_task(void* arg)
+{
+
+	uint_fast8_t profile = PROFILE_BATT_APP_ID, ch = 8; //profile and char id for bat_lvl char
+	do{
+		gpio_set_level(adc_en_pin, 0); //enable
+		vTaskDelay(100 / portTICK_RATE_MS);
+		int sum=0;
+		float battV,battLvl;
+		for (int i = 0; i < 1; i++) {
+			battV   = getBattVoltage();			//battery voltage
+			battLvl = getBattPercentage(battV); 	//battery percentage
+			sum+= (uint_fast8_t) battLvl;
+		}
+		battLvl = sum/1;
+		ESP_LOGW("Batt","BattV: %.2fmV\tLvl: %.2f%%\t",battV,battLvl);
+
+		if(BAT_lvl_str[0] != (int)battLvl){
+			battery_lvl_changed=true;
+			BAT_lvl_str[0] = (int)battLvl;
+		}
+
+		if(battery_lvl_changed){
+			if(gl_char[ch].is_notify && notify_TaskHandle != NULL){ //if char is notify and notify task was created
+				esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[0],
+						gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
+			}
+			battery_lvl_changed=false;
+		}
+		gpio_set_level(adc_en_pin, 1); //disable
+		if(gl_char[ch].is_notify){
+			vTaskDelay(60*1000 / portTICK_RATE_MS);
+		}else{
+			vTaskDelete(battery_TaskHandle);
+		}
+
+	}while(1);
+
+	vTaskDelete(battery_TaskHandle);
 }
 
 esp_err_t max30102_write_reg(uint8_t uch_addr, i2c_port_t i2c_num, uint8_t puch_data){
@@ -846,364 +896,6 @@ void data_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *me
 
 /*********************BLE PART**************************************************************************************/
 
-//***************DESCRIPTORS**********************//
-esp_attr_value_t gatts_demo_descr1_val = {
-		.attr_max_len = 22,
-		.attr_len		= sizeof(descr1_str),
-		.attr_value     = descr1_str,
-};
-
-static uint8_t adv_config_done = 0;
-#define adv_config_flag      (1 << 0)
-#define scan_rsp_config_flag (1 << 1)
-
-#ifdef CONFIG_SET_RAW_ADV_DATA
-static uint8_t raw_adv_data[] = {
-		0x02, 0x01, 0x06,
-		0x02, 0x0a, 0xeb, 0x03, 0x03, 0xab, 0xcd
-};
-static uint8_t raw_scan_rsp_data[] = {
-		0x0f, 0x09, 0x45, 0x53, 0x50, 0x5f, 0x47, 0x41, 0x54, 0x54, 0x53, 0x5f, 0x44,
-		0x45, 0x4d, 0x4f
-};
-#else
-
-static uint8_t adv_service_uuid128[32] = {
-		/* LSB <--------------------------------------------------------------------------------> MSB */
-		//first uuid, 16bit, [12],[13] is the value
-		0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xEE, 0x00, 0x00, 0x00,
-		//second uuid, 32bit, [12], [13], [14], [15] is the value
-		0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
-};
-
-static uint8_t heart_rate_service_uuid[48] = {
-		/* LSB <--------------------------------------------------------------------------------> MSB */
-		//first uuid, 16bit, [12],[13] is the value
-		0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x0D, 0x18, 0x00, 0x00,
-		//second uuid, 32bit, [12], [13], [14], [15] is the value
-		0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x37, 0x2A, 0x00, 0x00,
-		//third uuid, 32bit, [12], [13], [14], [15] is the value
-		0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x38, 0x2A, 0x00, 0x00,
-};
-// The length of adv data must be less than 31 bytes
-//static uint8_t test_manufacturer[TEST_MANUFACTURER_DATA_LEN] =  {0x12, 0x23, 0x45, 0x56};
-//adv data
-static esp_ble_adv_data_t adv_data = {
-		.set_scan_rsp = false,
-		.include_name = true,
-		.include_txpower = true,
-		.min_interval = 0x20,	//0x20
-		.max_interval = 0x40, 	//0x40
-		.appearance = 0x0340,//0x0C40		//http://dev.ti.com/tirex/content/simplelink_cc2640r2_sdk_1_35_00_33/docs/blestack/ble_sw_dev_guide/doxygen/group___g_a_p___appearance___values.html#gafc2f463732a098c1b42d30a766e90a6e
-		.manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
-		.p_manufacturer_data =  NULL, //&test_manufacturer[0],
-		.service_data_len = 0,
-		.p_service_data = NULL,
-		.service_uuid_len = sizeof(heart_rate_service_uuid),
-		.p_service_uuid = heart_rate_service_uuid,
-		.flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
-};
-// scan response data
-static esp_ble_adv_data_t scan_rsp_data = {
-		.set_scan_rsp = true,
-		.include_name = true,
-		.include_txpower = true,
-		.min_interval = 0x05,
-		.max_interval = 0x10,
-		.appearance = 0x0340,
-		.manufacturer_len = 0, //TEST_MANUFACTURER_DATA_LEN,
-		.p_manufacturer_data =  NULL, //&test_manufacturer[0],
-		.service_data_len = 0,
-		.p_service_data = NULL,
-		.service_uuid_len = sizeof(heart_rate_service_uuid),
-		.p_service_uuid = heart_rate_service_uuid,
-		.flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT), //TODO ver as flags
-};
-
-
-#endif /* CONFIG_SET_RAW_ADV_DATA */
-
-static esp_ble_adv_params_t adv_params = {
-		.adv_int_min        = 0x0180,
-		.adv_int_max        = 0x0580,
-		.adv_type           = ADV_TYPE_IND,
-		.own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
-		//.peer_addr          = {0x79, 0xdb, 0xa7, 0x91, 0x13, 0x18},
-		//.peer_addr_type     = BLE_ADDR_TYPE_PUBLIC,
-		.channel_map        = ADV_CHNL_ALL,
-		.adv_filter_policy  = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-};
-
-
-uint8_t char1_test_str[] = {0xE,1,123,0,13551>>8,13551&0x0F};	//Heart Rate//TODO delete this line
-
-struct gatts_profile_inst {
-	esp_gatts_cb_t gatts_cb;
-	uint16_t gatts_if;
-	uint16_t app_id;
-	uint16_t conn_id;
-	uint16_t service_handle;
-	uint16_t char_num;
-	uint16_t char_num_total;
-	esp_gatt_srvc_id_t service_id;
-	esp_bt_uuid_t char_uuid;
-	esp_gatt_perm_t perm;
-	esp_gatt_char_prop_t property;
-	uint16_t descr_handle;
-	esp_bt_uuid_t descr_uuid;
-	uint16_t char_handle[2];
-	int sensor_id;
-};
-
-static struct gatts_profile_inst gl_profile_tab[] = {
-		[PROFILE_HR1_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_HR1,
-				.gatts_cb = gatts_profile_a_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = 0,
-		},
-		[PROFILE_PLX1_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_PLX1,
-				.gatts_cb = gatts_profile_b_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = 0,
-		},
-		[PROFILE_HR2_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_HR2,
-				.gatts_cb = gatts_profile_c_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = 1,
-		},
-		[PROFILE_PLX2_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_PLX1,
-				.gatts_cb = gatts_profile_d_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = 1,
-		},
-		[PROFILE_RAW_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_RAW,
-				.gatts_cb = gatts_profile_e_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = -1,
-		},
-		[PROFILE_BATT_APP_ID] = {
-				.char_num =0,
-				.char_num_total = GATTS_CHAR_NUM_BATT,
-				.gatts_cb = gatts_profile_f_event_handler,
-				.gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-				.sensor_id = -1,
-		}
-
-};
-
-
-static struct gatts_char_inst gl_char[] = {
-		{		//0 Body Location Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =  GATTS_CHAR_UUID_BODY_LOCATION,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
-				.char_val = &char1_BL_val,
-				.char_control=NULL,
-				.char_handle = 0,
-				.char_read_callback=char1_read_handler,
-				.char_write_callback=char1_write_handler,
-				.descr_uuid.len = 0,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,  0x2902
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr1_read_handler,
-				.descr_write_callback=descr1_write_handler,
-				.is_notify = false
-		},
-		{		//1 Hearth rate Measurement Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16, // RX
-				.char_uuid.uuid.uuid16 =  GATTS_CHAR_UUID_HR,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &char2_HR1_val,
-				.char_control = NULL,
-				.char_handle = 0,
-				.char_read_callback=char2_read_handler,
-				.char_write_callback=char2_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr2_read_handler,
-				.descr_write_callback=descr2_write_handler,
-				.is_notify = false
-		},
-		{		//2 PLX Spot-check measurement
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_PLX,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &char3_PLX1_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char3_read_handler,
-				.char_write_callback=char3_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr3_read_handler,
-				.descr_write_callback=descr3_write_handler,
-				.is_notify = false
-		},
-		{		//3 Body Location Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =  GATTS_CHAR_UUID_BODY_LOCATION,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE ,
-				.char_val = &char4_BL2_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char4_read_handler,
-				.char_write_callback=char4_write_handler,
-				.descr_uuid.len = 0,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr4_read_handler,
-				.descr_write_callback=descr4_write_handler,
-				.is_notify = false
-		},
-		{		//4 Hearth rate Measurement Characteristic
-				.char_uuid.len = ESP_UUID_LEN_16, // RX
-				.char_uuid.uuid.uuid16 =  GATTS_CHAR_UUID_HR,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &char5_HR2_val,
-				.char_control = NULL,
-				.char_handle = 0,
-				.char_read_callback=char5_read_handler,
-				.char_write_callback=char5_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr5_read_handler,
-				.descr_write_callback=descr5_write_handler,
-				.is_notify = false
-		},
-		{		//5 PLX Spot-check measurement
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_PLX,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-				.char_val = &char6_PLX2_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char6_read_handler,
-				.char_write_callback=char6_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr6_read_handler,
-				.descr_write_callback=descr6_write_handler,
-				.is_notify = false
-		},
-		{		//6 HR RAW data
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_RAW,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
-				.char_val = &char7_RAW1_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char6_read_handler,
-				.char_write_callback=char6_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr6_read_handler,
-				.descr_write_callback=descr6_write_handler,
-				.is_notify = false
-		},
-		{		//7 HR RAW data
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_RAW,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
-				.char_val = &char8_RAW2_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char6_read_handler,
-				.char_write_callback=char6_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr6_read_handler,
-				.descr_write_callback=descr6_write_handler,
-				.is_notify = false
-		},
-		{		//8 Battery level
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_BAT_LVL,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
-				.char_val = &char9_BAT_lvl_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char6_read_handler,
-				.char_write_callback=char6_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr6_read_handler,
-				.descr_write_callback=descr6_write_handler,
-				.is_notify = false
-		},
-		{		//9 Battery State
-				.char_uuid.len = ESP_UUID_LEN_16,  // TX
-				.char_uuid.uuid.uuid16 =   GATTS_CHAR_UUID_BAT_POWER_STATE,
-				.char_perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.char_property = ESP_GATT_CHAR_PROP_BIT_NOTIFY,//
-				.char_val = &char10_BAT_state_val,
-				.char_control=NULL,
-				.char_handle =0,
-				.char_read_callback=char6_read_handler,
-				.char_write_callback=char6_write_handler,
-				.descr_uuid.len = ESP_UUID_LEN_16,
-				.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG, // ESP_GATT_UUID_CHAR_DESCRIPTION,
-				.descr_perm=ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-				.descr_val = &gatts_demo_descr1_val,
-				.descr_control=NULL,
-				.descr_handle=0,
-				.descr_read_callback=descr6_read_handler,
-				.descr_write_callback=descr6_write_handler,
-				.is_notify = false
-		}
-};
 
 void notify_task_optimized( void* arg) {
 	notify_task_running = true;
@@ -1238,11 +930,12 @@ void notify_task_optimized( void* arg) {
 							}
 						}else if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BAT_POWER_STATE){
 							//verify if battery status changed and notify
-							if(battery_status_changed){
+							//battery power state is notified in the interruption (for faster feedback)
+							/*if(battery_status_changed){
 								esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
 										gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 								battery_status_changed=false;
-							}
+							}*/
 						}
 						break;
 					default:
@@ -2164,6 +1857,10 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 				gl_char[i].char_val->attr_value[2]=0;
 			}
 		}
+		BAT_lvl_str[0] = 200;
+		//battery_lvl_changed=true;
+		//battery_status_changed=true;
+		vTaskResume(notify_TaskHandle);
 		esp_ble_gap_start_advertising(&adv_params);
 #ifdef EN_SENSOR0
 		max30102_shutdown(I2C_NUM_0);	//shutdown sensor
@@ -2880,10 +2577,13 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						ESP_LOGI(GATTS_TAG, "notify enable");
 						if (is_bat_level){
 							gl_char[8].is_notify = true; 	//notify bat lvl
-							ESP_LOGW("DEBUG","BAT_LVL");
+							ESP_LOGW("Notify","BAT_LVL");
+							xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+							BAT_lvl_str[0]=0;
 						}else{
 							gl_char[9].is_notify = true;	//notify bat state
-							ESP_LOGW("DEBUG","BAT_STATE");
+							ESP_LOGW("Notify","BAT_STATE");
+							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
 						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
@@ -2911,6 +2611,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 					ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
 					if (is_bat_level){
 						gl_char[8].is_notify = false;
+						vTaskDelete(battery_TaskHandle);
 					}else {
 						gl_char[9].is_notify = false;
 					}
