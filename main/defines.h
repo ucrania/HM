@@ -118,8 +118,9 @@
 #define INT_PIN_0     			34				 //RTC GPIO used for interruptions
 #define INT_PIN_1     			35				 //RTC GPIO used for interruptions
 #define INT_PIN_2     			37				 //RTC GPIO used for interruption when usb is connected
-#define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1) | (1ULL<<INT_PIN_2))
-#define GPIO_WAKEUP_PIN_SEL	((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1))
+#define INT_PIN_3     			0				 //RTC GPIO used for button (sleep or wake up esp32)
+#define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1) | (1ULL<<INT_PIN_2) | (1ULL<<INT_PIN_3))
+#define GPIO_WAKEUP_PIN_SEL	((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1) | (1ULL<<INT_PIN_3))
 #define ESP_INTR_FLAG_DEFAULT 0
 
 
@@ -266,6 +267,7 @@ void notify_task_optimized(void* arg);
 void isr_task_manager(void* arg);
 void batt_state_task(void* arg);
 void batt_level_task(void* arg);
+void standby_task(void* arg);
 void check_ret(esp_err_t ret, uint8_t sensor_data_h);
 esp_err_t max30102_read_reg (uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data);
 esp_err_t max30102_write_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t puch_data);

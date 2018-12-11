@@ -1,16 +1,17 @@
+//todo dar uso ao gpio0 (sleep e ativar)
 //todo detetar quantos sensores conectados temos
 //todo ha ruido no divisor de tensao ao detetar carga/discarga, como fazer?
 //todo perguntar como implemento zona critica do codigo enterCritical()
 //todo fazer estudo e subtrair offset da bateria quando esta em carga
-//todo Ler VUSB para saber o estado do carregamento
-//todo adicionar a caracteristica Power state  0x2A1A
-//todo fazer circuito para converter 0-5V para 0
 //todo negocio de emparelhar
 //todo fazer diagrama
 //todo meter a piscar o led conforme as fases em que o codigo está.
 //todo corrigir double advertising
-//todo fazer verificaçao para nao notificar dados repetidos
 //*******************+/-feito***********************
+//todo Ler VUSB para saber o estado do carregamento
+//todo adicionar a caracteristica Power state  0x2A1A
+//todo fazer circuito para converter 0-5V para 0
+//todo fazer verificaçao para nao notificar dados repetidos
 //todo organizar o codigo com handlers
 //todo enviar raw data com pacotes de tamanho variavel
 //todo fazer processamento dos dados
@@ -28,6 +29,7 @@
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
 #define EN_NOTIFY					//enable notify task
 #define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
+//#define EN_SLEEP_BUTTON				//enable GPIO0 sleep button (makes esp sleep or wake up)
 #define PLOT 						//disables other printf
 //#define PRINT_ALL_SENSOR_DATA 	//prints all fifo data
 
@@ -45,6 +47,7 @@ static bool sensor_have_finger[2]; //flag for finger presence on sensor
 static bool battery_lvl_changed=true;
 static bool battery_status_changed=true;
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
+static bool standby_state = false;
 
 TaskHandle_t notify_TaskHandle = NULL;
 TaskHandle_t battery_TaskHandle = NULL;
@@ -147,7 +150,8 @@ static esp_err_t max30102_shutdown(i2c_port_t i2c_num){
 	do{
 		max30102_read_reg(REG_MODE_CONFIG,i2c_num, &data_h);
 		ret = max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x80 | data_h);	//shutdown and keep the same mode
-	}while(ret != ESP_OK && i<100); //try to connect 100 times
+		i++;
+	}while(ret != ESP_OK && i<10); //try to connect 50 times
 	return ret;
 }
 static esp_err_t max30102_reset(i2c_port_t i2c_num){
@@ -158,7 +162,8 @@ static esp_err_t max30102_reset(i2c_port_t i2c_num){
 		max30102_read_reg(REG_INTR_STATUS_1,i2c_num,&data_h);//clear interrupt pin
 		max30102_read_reg(REG_MODE_CONFIG, i2c_num, &data_h);
 		ret = max30102_write_reg(REG_MODE_CONFIG,i2c_num,0x40 | data_h);	//reset and keep the same mode
-	}while(ret != ESP_OK && i<100); //try to connect 100 times
+		i++;
+	}while(ret != ESP_OK && i<10); //try to connect 100 times
 	return ret;
 }
 static esp_err_t max30102_init(i2c_port_t i2c_num){
@@ -178,7 +183,8 @@ static esp_err_t max30102_init(i2c_port_t i2c_num){
 		max30102_write_reg(REG_LED2_PA,i2c_num,get_LED2_PA());			//IR  LED current
 		max30102_write_reg(REG_PILOT_PA,i2c_num,get_LED1_PA());		//Multimode registers (not used)
 		max30102_write_reg(REG_PROX_INT_THRESH,i2c_num,0x30);
-	}while(ret != ESP_OK && i<100); //try to connect 100 times
+		i++;
+	}while(ret != ESP_OK && i<10); //try to connect 10 times
 	return ret;
 }
 
@@ -209,10 +215,15 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 	switch ((uint32_t)arg) {
 	case INT_PIN_0:
 	case INT_PIN_1:
-		xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 2, (void* ) arg, 10, NULL);
+		xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 10, NULL);
 		break;
 	case INT_PIN_2:
 		xTaskCreate(batt_state_task,"batt_task",	1024*4, (void*) arg, 10 , NULL);
+		break;
+	case INT_PIN_3:
+		gpio_set_intr_type(INT_PIN_3, GPIO_INTR_DISABLE);
+		gpio_set_level(5,!gpio_get_level(5));
+		xTaskCreate(standby_task,"standby_task",	1024*4, (void*) arg, 10, NULL);
 		break;
 	default:
 		break;
@@ -487,6 +498,7 @@ void batt_state_task(void* arg)
 			esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
 					gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 			battery_status_changed=false;
+			xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
 		}
 	}
 
@@ -547,6 +559,32 @@ void batt_level_task(void* arg)
 	vTaskDelete(battery_TaskHandle);
 }
 
+void standby_task(void* arg){
+	gpio_set_intr_type(INT_PIN_3, GPIO_INTR_DISABLE);
+	ESP_LOGI("StandBy","%s",!standby_state ? "Enable" : "Wake up");
+	standby_state = !standby_state;
+	if(standby_state){
+		 esp_bluedroid_disable();
+		 esp_bluedroid_deinit();
+		 esp_bt_controller_disable();
+		 esp_bt_controller_deinit();
+		 vTaskDelay(pdMS_TO_TICKS(100));
+		 gpio_set_intr_type(INT_PIN_3, GPIO_INTR_LOW_LEVEL);
+		 gpio_wakeup_enable(0,GPIO_INTR_LOW_LEVEL);
+		 esp_deep_sleep_start();
+		//vTaskSuspendAll();
+	}else{
+//not working yet
+		bt_main(); //enable bluedroid and bt controller
+		gpio_set_intr_type(INT_PIN_3, GPIO_INTR_LOW_LEVEL);
+		//app_main();
+
+	}
+
+	vTaskDelete(NULL);
+}
+
+
 esp_err_t max30102_write_reg(uint8_t uch_addr, i2c_port_t i2c_num, uint8_t puch_data){
 
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -580,7 +618,7 @@ esp_err_t max30102_read_reg(uint8_t uch_addr,i2c_port_t i2c_num, uint8_t* data_h
 		printf("ESP NOT OK READING\n");
 		return ret;
 	}
-	vTaskDelay(50 / portTICK_RATE_MS);
+	vTaskDelay(10 / portTICK_RATE_MS);
 	cmd = i2c_cmd_link_create();
 	i2c_master_start(cmd);
 	i2c_master_write_byte(cmd, MAXREFDES117_ADDR << 1 | READ_BIT, ACK_CHECK_EN);
@@ -832,25 +870,34 @@ uint8_t get_LED2_PA(){ //IR LED CURRENT
 
 void intr_init(){
 	gpio_config_t io_conf;
-	io_conf.intr_type = GPIO_PIN_INTR_NEGEDGE;		//interrupt of falling edge
-	io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;		//bit mask of the pins, use GPIO25/26 here
+	io_conf.intr_type = GPIO_PIN_INTR_NEGEDGE;		//interrupt ofn falling edge
+	io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;		//bit mask of the pins
 	io_conf.mode = GPIO_MODE_INPUT;					//set as input mode
 	io_conf.pull_down_en = 0;						//disable pull-down mode
 	io_conf.pull_up_en = 1;							//enable pull-up mode
 	gpio_config(&io_conf);
-	//gpio_set_intr_type(INT_PIN_0, GPIO_INTR_NEGEDGE);	//interrupt of falling edge
+	//gpio_set_intr_type(INT_PIN_0, GPIO_INTR_NEGEDGE);	//interrupt on falling edge
+	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);		//install gpio isr service
 	rtc_gpio_pullup_en(INT_PIN_0);
 	rtc_gpio_pullup_en(INT_PIN_1);
-	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);		//install gpio isr service
 	gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
 	gpio_isr_handler_add(INT_PIN_1, gpio_isr_handler, (void*) INT_PIN_1);	//hook isr handler for specific gpio pin
 #ifdef EN_BATTERY_MEASURMENT_TASK
-	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);	//interrupt of falling edge
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);	//interrupt on falling edge
 	gpio_isr_handler_add(INT_PIN_2, gpio_isr_handler, (void*) INT_PIN_2);	//hook isr handler for specific gpio pin
 	rtc_gpio_pullup_dis(INT_PIN_2);
 	rtc_gpio_pulldown_en(INT_PIN_2);
 #endif
-	esp_sleep_enable_ext1_wakeup(GPIO_WAKEUP_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up by pin 34 and 35
+#ifdef EN_SLEEP_BUTTON
+	gpio_set_intr_type(INT_PIN_3, GPIO_INTR_NEGEDGE);	//interrupt on falling edge
+	gpio_isr_handler_add(INT_PIN_3, gpio_isr_handler, (void*) INT_PIN_3);	//hook isr handler for specific gpio pin
+	rtc_gpio_pullup_dis(INT_PIN_3);
+	rtc_gpio_pulldown_en(INT_PIN_3);
+#endif
+	//esp_sleep_enable_ext0_wakeup(INT_PIN_3, GPIO_PIN_INTR_LOLEVEL);
+	esp_sleep_enable_ext1_wakeup(GPIO_WAKEUP_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up
+	gpio_wakeup_enable(0,GPIO_PIN_INTR_LOLEVEL);
+	//gpio_pin_wakeup_enable(GPIO_NUM_0,GPIO_PIN_INTR_LOLEVEL);
 }
 
 double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
@@ -1823,10 +1870,12 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 	case ESP_GATTS_CONNECT_EVT: {
 #ifdef EN_MAX30102_READING_TASK
 #ifdef EN_SENSOR0
-		max30102_init(I2C_NUM_0);	//start sensors
+		if(sensor_detected[0]==ESP_OK)
+		sensor_detected[0]=max30102_init(I2C_NUM_0);	//start sensors
 #endif
 #ifdef EN_SENSOR1
-		max30102_init(I2C_NUM_1);
+		if(sensor_detected[1]==ESP_OK)
+		sensor_detected[1]=max30102_init(I2C_NUM_1);
 #endif
 #endif
 		esp_ble_conn_update_params_t conn_params = {0};
@@ -1860,14 +1909,18 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 		BAT_lvl_str[0] = 200;
 		//battery_lvl_changed=true;
 		//battery_status_changed=true;
-		vTaskResume(notify_TaskHandle);
+		//vTaskDelete(notify_TaskHandle);
 		esp_ble_gap_start_advertising(&adv_params);
+
 #ifdef EN_SENSOR0
-		max30102_shutdown(I2C_NUM_0);	//shutdown sensor
+		if(sensor_detected[0]==ESP_OK)
+			max30102_shutdown(I2C_NUM_0);	//shutdown sensor
 #endif
 #ifdef EN_SENSOR1
-		max30102_shutdown(I2C_NUM_1);	//shutdown sensor
+		if(sensor_detected[1]==ESP_OK)
+			max30102_shutdown(I2C_NUM_1);	//shutdown sensor
 #endif
+
 		break;
 	case ESP_GATTS_CONF_EVT:
 		ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d", param->conf.status);
@@ -2752,7 +2805,7 @@ void bt_main(){
 		ret = nvs_flash_init();
 	}
 	ESP_ERROR_CHECK( ret );
-	ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+	//ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
 	esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
 	ret = esp_bt_controller_init(&bt_cfg);
