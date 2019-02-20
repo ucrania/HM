@@ -264,7 +264,7 @@ void i2c_task_1(void* arg);
 void blink_task(void* arg);
 void notify_task(void* arg);
 void notify_task_optimized(void* arg);
-void isr_task_manager(void* arg);
+void sensor_task_manager(void* arg);
 void batt_state_task(void* arg);
 void batt_level_task(void* arg);
 void standby_task(void* arg);

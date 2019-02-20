@@ -1,11 +1,11 @@
+//todo fazer diagrama
+//todo meter a piscar o led conforme as fases em que o codigo está.
 //todo dar uso ao gpio0 (sleep e ativar)
 //todo detetar quantos sensores conectados temos
 //todo ha ruido no divisor de tensao ao detetar carga/discarga, como fazer?
 //todo perguntar como implemento zona critica do codigo enterCritical()
 //todo fazer estudo e subtrair offset da bateria quando esta em carga
 //todo negocio de emparelhar
-//todo fazer diagrama
-//todo meter a piscar o led conforme as fases em que o codigo está.
 //todo corrigir double advertising
 //*******************+/-feito***********************
 //todo Ler VUSB para saber o estado do carregamento
@@ -28,7 +28,7 @@
 #define EN_BLE_TASK					//enable bluetooth
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
 #define EN_NOTIFY					//enable notify task
-#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
+//#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 //#define EN_SLEEP_BUTTON				//enable GPIO0 sleep button (makes esp sleep or wake up)
 #define PLOT 						//disables other printf
 //#define PRINT_ALL_SENSOR_DATA 	//prints all fifo data
@@ -215,7 +215,7 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 	switch ((uint32_t)arg) {
 	case INT_PIN_0:
 	case INT_PIN_1:
-		xTaskCreate(isr_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 10, NULL);
+		xTaskCreate(sensor_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 10, NULL);
 		break;
 	case INT_PIN_2:
 		xTaskCreate(batt_state_task,"batt_task",	1024*4, (void*) arg, 10 , NULL);
@@ -350,6 +350,8 @@ if (port == I2C_NUM_0){ //if sensor0
 }*/
 if (notify_TaskHandle != NULL){
 	*buffer_pos +=1;
+}else{
+	*buffer_pos = -1;
 }
 if(*buffer_pos > 0){//ignore 1st read
 
@@ -360,11 +362,10 @@ if(*buffer_pos > 0){//ignore 1st read
 	if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
 		if (port == I2C_NUM_0){
 			sensor_have_finger[0] = false;
-			*buffer_pos = -1;
 		}else {
 			sensor_have_finger[1] = false;
-			*buffer_pos = -1;
 		}
+		*buffer_pos = -1;
 		max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 	}
 	if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
@@ -386,6 +387,8 @@ if(*buffer_pos > 0){//ignore 1st read
 				REDdata_to_process[i]= raw_ptr_aux1_RED[i];
 			}
 		}
+
+		//process data and get HR and spo2 value if data is valid
 		heart_rate_and_oxygen_saturation(IRdata_to_process,data_len,REDdata_to_process,&SPO2_value,&spo2_valid,&HR_value,&hr_valid,&ratio,&correl);
 
 		if(spo2_valid && hr_valid){
@@ -394,6 +397,7 @@ if(*buffer_pos > 0){//ignore 1st read
 			uint16_t spo2_16;
 			uint8_t *spo2_8;
 			memcpy(&spo2_32,&SPO2_value,sizeof(float));
+
 			//passing from float32 to float16 and assigning in the array
 			spo2_16    =  ((spo2_32 & 0x7fffffff) >> 13) - (0x38000000 >> 13);
 			spo2_16    |= ((spo2_32 & 0x80000000) >> 16);
@@ -445,9 +449,9 @@ void blink_task(void* arg)
 	vTaskDelete(NULL);
 }
 
-void isr_task_manager(void* arg)
+void sensor_task_manager(void* arg)
 {
-	ESP_LOGI("ISR_TASK_MANAGER","on core %d\tpin: %d",xPortGetCoreID(),(int)arg);
+	ESP_LOGI("Sensor_TASK_MANAGER","on core %d\tpin: %d",xPortGetCoreID(),(int)arg);
 	uint8_t data=0x00;
 	i2c_port_t port = (i2c_port_t)arg == INT_PIN_0 ? I2C_NUM_0: I2C_NUM_1;
 
@@ -477,8 +481,8 @@ void isr_task_manager(void* arg)
 }
 
 void batt_state_task(void* arg)
-{	/*Runs when interruption on pin 37 is generated
- 	 Reads GPIO37 and get state - Charging or not Charging*/
+{	/* Runs when interruption on pin 37 is generated
+ 	 * Reads GPIO37 and get state - Charging or not Charging*/
 	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//disable interrupt to prevent debouncing
 	printf("Batt_task int_pin: %d on core %d\n",(int)arg,xPortGetCoreID());
 	battery_status_changed=true;
@@ -487,18 +491,22 @@ void batt_state_task(void* arg)
 	uint_fast8_t CHARGING_FLAG = is_charging ? BATT_STATE_CHARGING:BATT_STATE_NOT_CHARGING;
 	BAT_state_str[0] = BATT_STATE_PRESENT|BATT_STATE_DISCHARGING|CHARGING_FLAG|BATT_STATE_GOOD_LEVEL;
 	//BAT_state_str[0] = 0x03|(0x03<<2)|(0x02<<4)|(0x00<<6) | (is_charging << 5);
+
 	if(is_charging){
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_NEGEDGE);	//interrupt on falling edge
 	}else{
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_POSEDGE);	//interrupt on rising edge
 	}
+
 	if(battery_status_changed){
 		uint_fast8_t profile = PROFILE_BATT_APP_ID, ch = 9; //profile and char id for bat_state char
 		if(gl_char[ch].is_notify && notify_TaskHandle != NULL){ //if char is notify and notify task was created
 			esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
 					gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 			battery_status_changed=false;
+#ifdef EN_BATTERY_MEASURMENT_TASK
 			xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+#endif
 		}
 	}
 
@@ -554,7 +562,7 @@ void batt_level_task(void* arg)
 			vTaskDelete(battery_TaskHandle);
 		}
 
-	}while(1);
+	}while(0);
 
 	vTaskDelete(battery_TaskHandle);
 }
@@ -893,11 +901,11 @@ void intr_init(){
 	gpio_isr_handler_add(INT_PIN_3, gpio_isr_handler, (void*) INT_PIN_3);	//hook isr handler for specific gpio pin
 	rtc_gpio_pullup_dis(INT_PIN_3);
 	rtc_gpio_pulldown_en(INT_PIN_3);
-#endif
 	//esp_sleep_enable_ext0_wakeup(INT_PIN_3, GPIO_PIN_INTR_LOLEVEL);
-	esp_sleep_enable_ext1_wakeup(GPIO_WAKEUP_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up
-	gpio_wakeup_enable(0,GPIO_PIN_INTR_LOLEVEL);
+	//gpio_wakeup_enable(0,GPIO_PIN_INTR_LOLEVEL);
 	//gpio_pin_wakeup_enable(GPIO_NUM_0,GPIO_PIN_INTR_LOLEVEL);
+#endif
+	esp_sleep_enable_ext1_wakeup(GPIO_WAKEUP_PIN_SEL,ESP_EXT1_WAKEUP_ALL_LOW); //enable external wake up
 }
 
 double process_data(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2){
@@ -2631,12 +2639,12 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						if (is_bat_level){
 							gl_char[8].is_notify = true; 	//notify bat lvl
 							ESP_LOGW("Notify","BAT_LVL");
-							xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
-							BAT_lvl_str[0]=0;
+							//xTaskCreate(batt_level_task, "batt_level_task", 1024 * 4, (void*) 0, 10, &battery_TaskHandle);
+							//BAT_lvl_str[0]=0;
 						}else{
 							gl_char[9].is_notify = true;	//notify bat state
 							ESP_LOGW("Notify","BAT_STATE");
-							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
+							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
 						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
