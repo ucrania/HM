@@ -562,7 +562,7 @@ void batt_level_task(void* arg)
 			vTaskDelete(battery_TaskHandle);
 		}
 
-	}while(0);
+	}while(1);
 
 	vTaskDelete(battery_TaskHandle);
 }
