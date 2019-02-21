@@ -22,6 +22,7 @@
 static uint32_t ble_add_char_pos;
 static uint8_t n_notify = 0;
 static bool notify_task_running = false;
+static bool battery_task_running = false;
 
 uint8_t *raw_ptr0_IR,*raw_ptr0_RED,*raw_ptr1_IR,*raw_ptr1_RED;
 static uint8_t body_location1_str[] = {FINGER}; 									//Body Location:

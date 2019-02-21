@@ -28,7 +28,7 @@
 #define EN_BLE_TASK					//enable bluetooth
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
 #define EN_NOTIFY					//enable notify task
-//#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
+#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 //#define EN_SLEEP_BUTTON				//enable GPIO0 sleep button (makes esp sleep or wake up)
 #define PLOT 						//disables other printf
 //#define PRINT_ALL_SENSOR_DATA 	//prints all fifo data
@@ -112,7 +112,7 @@ static float getBattVoltage(){
 	uint32_t adc_reading = 0;
 	//Multisampling
 	for (int i = 0; i < NO_OF_SAMPLES; i++) {
-		adc_reading += adc1_get_raw((adc1_channel_t)channel);
+		adc_reading += adc1_get_raw((adc1_channel_t)channel); //GPIO36
 		vTaskDelay(1 / portTICK_RATE_MS);
 	}
 	adc_reading /= NO_OF_SAMPLES;
@@ -341,6 +341,7 @@ if (port == I2C_NUM_0){ //if sensor0
 		//print_array(raw_ptr1,(sizeof(RAWsensorDataIR)/2)*(*buffer_pos+1));
 	}
 }
+
 /*if(*buffer_pos >= 0){
 	raw_pptr_IR = realloc(raw_ptr0_IR,sizeof(RAWsensorDataIR)*(*buffer_pos+1));
 	raw_pptr_RED = realloc(raw_ptr0_RED,sizeof(RAWsensorDataRED)*(*buffer_pos+1));
@@ -505,30 +506,26 @@ void batt_state_task(void* arg)
 					gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 			battery_status_changed=false;
 #ifdef EN_BATTERY_MEASURMENT_TASK
-			xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+			if(!battery_task_running){
+				xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+			}else{
+				//notify batt_lvl
+			}
 #endif
 		}
 	}
-
-	/*//taskENTER_CRITICAL(NULL);
-	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
-	float battV   = getBattVoltage();			//battery voltage
-	float battLvl = getBattPercentage(battV); 	//battery percentage
-
-	printf("BattV: %.2fmV\t",battV);
-	printf("Lvl: %.2f%%\n",battLvl);
-
-	vTaskDelay(5 / portTICK_RATE_MS);
-	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);
-	//portEXIT_CRITICAL(NULL);*/
-	//gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//interrupt disable //todo remove this line to make charging state
+	float batt_v = getBattVoltage();
+	if(batt_v < 2500 || batt_v > 4500){ //Battery not detected
+		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
+		ESP_LOGE("Battery","Not detected %f",batt_v);
+	}
 	vTaskDelete(NULL);
 
 }
 
 void batt_level_task(void* arg)
 {
-
+	battery_task_running = true;
 	uint_fast8_t profile = PROFILE_BATT_APP_ID, ch = 8; //profile and char id for bat_lvl char
 	do{
 		gpio_set_level(adc_en_pin, 0); //enable
@@ -557,14 +554,17 @@ void batt_level_task(void* arg)
 		}
 		gpio_set_level(adc_en_pin, 1); //disable
 		if(gl_char[ch].is_notify){
-			vTaskDelay(60*1000 / portTICK_RATE_MS);
+			vTaskDelay(20*1000 / portTICK_RATE_MS);
 		}else{
+			battery_task_running = false;
 			vTaskDelete(battery_TaskHandle);
+			battery_TaskHandle = NULL;
 		}
 
 	}while(1);
-
+	battery_task_running = false;
 	vTaskDelete(battery_TaskHandle);
+	battery_TaskHandle = NULL;
 }
 
 void standby_task(void* arg){
@@ -1914,6 +1914,11 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 				gl_char[i].char_val->attr_value[2]=0;
 			}
 		}
+		if(battery_task_running){
+			battery_task_running = false;
+			vTaskDelete(battery_TaskHandle);
+			battery_TaskHandle = NULL;
+		}
 		BAT_lvl_str[0] = 200;
 		//battery_lvl_changed=true;
 		//battery_status_changed=true;
@@ -2639,12 +2644,15 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						if (is_bat_level){
 							gl_char[8].is_notify = true; 	//notify bat lvl
 							ESP_LOGW("Notify","BAT_LVL");
-							//xTaskCreate(batt_level_task, "batt_level_task", 1024 * 4, (void*) 0, 10, &battery_TaskHandle);
-							//BAT_lvl_str[0]=0;
+#ifdef EN_BATTERY_MEASURMENT_TASK
+							if(!battery_task_running){
+								xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+							}
+#endif
 						}else{
 							gl_char[9].is_notify = true;	//notify bat state
 							ESP_LOGW("Notify","BAT_STATE");
-							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
+							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
 						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
@@ -2672,7 +2680,11 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 					ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
 					if (is_bat_level){
 						gl_char[8].is_notify = false;
-						vTaskDelete(battery_TaskHandle);
+						if(battery_task_running){
+							battery_task_running = false;
+							vTaskDelete(battery_TaskHandle);
+							battery_TaskHandle = NULL;
+						}
 					}else {
 						gl_char[9].is_notify = false;
 					}
