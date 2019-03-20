@@ -20,6 +20,7 @@
 
 
 #include "freertos/FreeRTOS.h"
+#include "esp_freertos_hooks.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "driver/gpio.h"
@@ -29,6 +30,7 @@
 #include "esp_adc_cal.h"
 #include "esp_intr_alloc.h"
 #include "esp_system.h"
+#include "esp_pm.h"
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
 #include "esp_bt.h"
@@ -286,5 +288,14 @@ void data_rms(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *rms
 void data_mean(uint16_t RAWsensorDataRED[],uint16_t RAWsensorDataIR[],double *mean1, double *mean2);
 void print_array(uint8_t *array,uint16_t size);
 void bt_main();
+
+void max30102_blink(int n_times, int period, i2c_port_t port0 );
+void idle_task_print(void* arg);
+void vApplicationIdleHook(void* arg);
+void idle_task_0(void* arg);
+void idle_task_1(void* arg);
+
+static double core0_idle_time = 0,core0_idle_time_last = 0;
+static double core1_idle_time = 0,core1_idle_time_last = 0;
 
 #endif /* MAIN_DEFINES_H_ */

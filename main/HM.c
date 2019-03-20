@@ -1,3 +1,21 @@
+/***************************
+ * Heart Monit Project
+ *
+ * This code was created in
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ * 2018/2019
+*/
+
+//todo Implementar OTA
+//todo negocio de emparelhar
+//todo corrigir double advertising
+//*******************+/-feito***********************
 //todo fazer diagrama
 //todo meter a piscar o led conforme as fases em que o codigo está.
 //todo dar uso ao gpio0 (sleep e ativar)
@@ -5,9 +23,6 @@
 //todo ha ruido no divisor de tensao ao detetar carga/discarga, como fazer?
 //todo perguntar como implemento zona critica do codigo enterCritical()
 //todo fazer estudo e subtrair offset da bateria quando esta em carga
-//todo negocio de emparelhar
-//todo corrigir double advertising
-//*******************+/-feito***********************
 //todo Ler VUSB para saber o estado do carregamento
 //todo adicionar a caracteristica Power state  0x2A1A
 //todo fazer circuito para converter 0-5V para 0
@@ -232,6 +247,21 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 
 void app_main()
 {
+	int cpu_freq = 26;
+	esp_pm_config_esp32_t pm_config = {
+	            .max_cpu_freq = 80,
+				.max_freq_mhz = 80,
+	            .min_cpu_freq = 80,
+				.min_freq_mhz = 80,
+				.light_sleep_enable = false
+	    };
+
+	    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
+	//define idle task hooks
+	esp_register_freertos_idle_hook_for_cpu(idle_task_0,0);
+	esp_register_freertos_idle_hook_for_cpu(idle_task_1,1);
+	xTaskCreate(idle_task_print, "idle_task_print", 1024 * 2, (void* ) 0, 10, NULL);
+
 	raw_ptr0_IR = malloc(FIFO_A_FULL);
 	raw_ptr0_RED =malloc(FIFO_A_FULL);
 	raw_ptr1_IR = malloc(FIFO_A_FULL);
@@ -261,14 +291,20 @@ void app_main()
 	printf("Start app_main\n");
 	intr_init();
 #ifdef EN_SENSOR0
-	i2c_init(I2C_NUM_0);
-	sensor_detected[0] = max30102_shutdown(I2C_NUM_0);
-	ESP_LOGI("Sensor 0","%s",sensor_detected[0]==ESP_OK ? "Detected" : "NOT Detected");
+	i2c_port_t port0 = I2C_NUM_0;
+	i2c_init(port0);
+	max30102_init(port0);
+	max30102_blink(5, 200, port0);
+	sensor_detected[0] = max30102_shutdown(port0);
+	ESP_LOGW("\tSensor 0","%s",sensor_detected[0]==ESP_OK ? "Detected" : "NOT Detected");
 #endif
 #ifdef EN_SENSOR1
-	i2c_init(I2C_NUM_1);
-	sensor_detected[1] = max30102_shutdown(I2C_NUM_1);
-	ESP_LOGI("Sensor 1","%s",sensor_detected[1]==ESP_OK ? "Detected" : "NOT Detected");
+	i2c_port_t port1 = I2C_NUM_1;
+	i2c_init(port1);
+	max30102_init(port1);
+	max30102_blink(5, 200, port1);
+	sensor_detected[1] = max30102_shutdown(port1);
+	ESP_LOGW("\tSensor 1","%s",sensor_detected[1]==ESP_OK ? "Detected" : "NOT Detected");
 #endif
 #endif
 
@@ -393,7 +429,7 @@ if(*buffer_pos > 0){//ignore 1st read
 		heart_rate_and_oxygen_saturation(IRdata_to_process,data_len,REDdata_to_process,&SPO2_value,&spo2_valid,&HR_value,&hr_valid,&ratio,&correl);
 
 		if(spo2_valid && hr_valid){
-			ESP_LOGW("Processamento","HR: %d\tSPO2: %f\n",HR_value,SPO2_value);
+			ESP_LOGW("Processamento","HR: %d\tSPO2: %f\t Sensor: %d \n",HR_value,SPO2_value,port == I2C_NUM_0?0:1);
 			uint32_t spo2_32;
 			uint16_t spo2_16;
 			uint8_t *spo2_8;
@@ -415,7 +451,7 @@ if(*buffer_pos > 0){//ignore 1st read
 				PLX2_str[2]=spo2_8[1];
 			}
 		}else{
-			ESP_LOGE("Processamento","HR: %d\tSPO2: %f\n",HR_value,SPO2_value);
+			ESP_LOGE("Processamento","HR: %d\tSPO2: %f\t Sensor: %d \n",HR_value,SPO2_value,port == I2C_NUM_0?0:1);
 		}
 		char7_RAW1_val.attr_value=raw_ptr0_IR;
 		char8_RAW2_val.attr_value=raw_ptr1_IR;
@@ -515,7 +551,7 @@ void batt_state_task(void* arg)
 		}
 	}
 	float batt_v = getBattVoltage();
-	if(batt_v < 2500 || batt_v > 4500){ //Battery not detected
+	if(batt_v < 500 || batt_v > 4500){ //Battery not detected
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
 		ESP_LOGE("Battery","Not detected %f",batt_v);
 	}
@@ -539,7 +575,6 @@ void batt_level_task(void* arg)
 		}
 		battLvl = sum/1;
 		ESP_LOGW("Batt","BattV: %.2fmV\tLvl: %.2f%%\t",battV,battLvl);
-
 		if(BAT_lvl_str[0] != (int)battLvl){
 			battery_lvl_changed=true;
 			BAT_lvl_str[0] = (int)battLvl;
@@ -1784,6 +1819,20 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 					if (ESP_GATT_CHAR_PROP_BIT_NOTIFY){
 						ESP_LOGI(GATTS_TAG, "notify enable");
 						gl_char[1].is_notify = true;	//notify flag
+#ifdef EN_MAX30102_READING_TASK
+uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
+#ifdef EN_SENSOR0
+		max30102_read_fifo(I2C_NUM_0, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
+		if(sensor_detected[0]==ESP_OK)
+		sensor_detected[0]=max30102_init(I2C_NUM_0);	//start sensors
+#endif
+#ifdef EN_SENSOR1
+		max30102_read_fifo(I2C_NUM_1, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
+		if(sensor_detected[1]==ESP_OK)
+		sensor_detected[1]=max30102_init(I2C_NUM_1);
+#endif
+#endif
+
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
 							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
@@ -1878,14 +1927,13 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 	case ESP_GATTS_CONNECT_EVT: {
 #ifdef EN_MAX30102_READING_TASK
 #ifdef EN_SENSOR0
-		if(sensor_detected[0]==ESP_OK)
-		sensor_detected[0]=max30102_init(I2C_NUM_0);	//start sensors
+		sensor_detected[0]=max30102_reset(I2C_NUM_0);
 #endif
 #ifdef EN_SENSOR1
-		if(sensor_detected[1]==ESP_OK)
-		sensor_detected[1]=max30102_init(I2C_NUM_1);
+		sensor_detected[1]=max30102_reset(I2C_NUM_1);
 #endif
 #endif
+
 		esp_ble_conn_update_params_t conn_params = {0};
 		memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
 		/* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
@@ -2914,7 +2962,46 @@ void print_array(uint8_t *array,uint16_t size){
 	}
 }
 
+void max30102_blink(int n_times, int period, i2c_port_t port){
+/* n_times - number of times to blink
+ * 	period  - period of blinking in MS
+ * 	port	- i2c port to use
+ * */
+	for (int i = 0; i < n_times; i++) {
 
+		max30102_write_reg(REG_PILOT_PA,port,50);
+		vTaskDelay(period / portTICK_RATE_MS);
+		max30102_write_reg(REG_PILOT_PA,port,1);
+		vTaskDelay(period / portTICK_RATE_MS);
+	}
+}
+
+void vApplicationIdleHook(void* arg){
+	//core0_idle_time++;
+	//core1_idle_time++;
+}
+
+void idle_task_print(void* arg){
+	do{
+		ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
+		ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
+		core0_idle_time_last = core0_idle_time;
+		core1_idle_time_last = core1_idle_time;
+		vTaskDelay(10000 / portTICK_RATE_MS); // delay 10s
+	}while(1);
+}
+
+void idle_task_0(void* arg){
+	//for(;;){
+		core0_idle_time++;
+	//}
+}
+
+void idle_task_1(void* arg){
+	//for(;;){
+		core1_idle_time++;
+	//}
+}
 
 
 
