@@ -44,6 +44,7 @@
 #define EN_BLE_BOND_TASK			//enable bond in bluetooth
 #define EN_NOTIFY					//enable notify task
 #define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
+//#define EN_CHECK_BAT_PRESENCE		//enable battery presence check, (getting wrong values)
 //#define EN_SLEEP_BUTTON				//enable GPIO0 sleep button (makes esp sleep or wake up)
 #define PLOT 						//disables other printf
 //#define PRINT_ALL_SENSOR_DATA 	//prints all fifo data
@@ -247,12 +248,13 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 
 void app_main()
 {
-	int cpu_freq = 26;
+	int min_cpu_freq = 26, max_cpu_freq = 160;//160MHz is optimal tradeoff freq/power
+
 	esp_pm_config_esp32_t pm_config = {
-	            .max_cpu_freq = 80,
-				.max_freq_mhz = 80,
+	            .max_cpu_freq = max_cpu_freq,
+				.max_freq_mhz = max_cpu_freq,
 	            .min_cpu_freq = 80,
-				.min_freq_mhz = 80,
+				.min_freq_mhz = min_cpu_freq,
 				.light_sleep_enable = false
 	    };
 
@@ -520,7 +522,7 @@ void sensor_task_manager(void* arg)
 void batt_state_task(void* arg)
 {	/* Runs when interruption on pin 37 is generated
  	 * Reads GPIO37 and get state - Charging or not Charging*/
-	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//disable interrupt to prevent debouncing
+	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);	//disable interrupt to prevent (de)bouncing
 	printf("Batt_task int_pin: %d on core %d\n",(int)arg,xPortGetCoreID());
 	battery_status_changed=true;
 	is_charging = gpio_get_level(GPIO_NUM_37);
@@ -550,11 +552,13 @@ void batt_state_task(void* arg)
 #endif
 		}
 	}
+#ifdef EN_CHECK_BAT_PRESENCE
 	float batt_v = getBattVoltage();
 	if(batt_v < 500 || batt_v > 4500){ //Battery not detected
 		gpio_set_intr_type(INT_PIN_2, GPIO_INTR_DISABLE);
 		ESP_LOGE("Battery","Not detected %f",batt_v);
 	}
+#endif
 	vTaskDelete(NULL);
 
 }
@@ -2936,7 +2940,7 @@ void bt_main(){
 		}
 	}
 
-	esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(FIFO_A_FULL *PACKS_TO_SEND + 3);//Define MTU size 60 bytes + 1 byte op_code + 2 byte handle
+	esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(FIFO_A_FULL *PACKS_TO_SEND + 3);//Define MTU size 120 bytes + 1 byte op_code + 2 byte handle
 	if (local_mtu_ret){
 		ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
 	}
@@ -2983,8 +2987,8 @@ void vApplicationIdleHook(void* arg){
 
 void idle_task_print(void* arg){
 	do{
-		ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
-		ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
+		//ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
+		//ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
 		core0_idle_time_last = core0_idle_time;
 		core1_idle_time_last = core1_idle_time;
 		vTaskDelay(10000 / portTICK_RATE_MS); // delay 10s
