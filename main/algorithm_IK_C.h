@@ -25,7 +25,7 @@
 #define FS 		SPO2_SAMPLE_RATE/SMP_AVE               //  25 sampling frequency
 #define BUFFER_SIZE ((FIFO_A_FULL/2)*PACKS_TO_SEND)  //  (FS*4)
 #define FS60 (FS*60)        //  Conversion factor for heart rate
-#define MAX_HR 180          //  Maximal heart rate
+#define MAX_HR 230          //  Maximal heart rate
 #define MIN_HR 30           //  Minimal heart rate
 
 

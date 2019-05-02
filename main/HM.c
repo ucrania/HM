@@ -258,12 +258,13 @@ void app_main()
 				.light_sleep_enable = false
 	    };
 
-	    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
+	ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
+#if  defined(CONFIG_FREERTOS_LEGACY_HOOKS) & defined(CONFIG_FREERTOS_LEGACY_IDLE_HOOK)
 	//define idle task hooks
 	esp_register_freertos_idle_hook_for_cpu(idle_task_0,0);
 	esp_register_freertos_idle_hook_for_cpu(idle_task_1,1);
 	xTaskCreate(idle_task_print, "idle_task_print", 1024 * 2, (void* ) 0, 10, NULL);
-
+#endif
 	raw_ptr0_IR = malloc(FIFO_A_FULL);
 	raw_ptr0_RED =malloc(FIFO_A_FULL);
 	raw_ptr1_IR = malloc(FIFO_A_FULL);
@@ -343,7 +344,10 @@ void i2c_task_0(void* arg)
 }
 
 void i2c_task_1(void* arg)
-{	double mean1, mean2;
+{
+
+	ESP_LOGW("Core"," %d",xPortGetCoreID());
+	double mean1, mean2;
 #ifndef PLOT
 printf("Start i2c_task_1!\n");
 #endif
@@ -515,6 +519,7 @@ void sensor_task_manager(void* arg)
 	}
 
 	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
+	//xTaskCreatePinnedToCore(i2c_task_1,"i2c_task_1",1024*4, (void*) port, 10,NULL,port == I2C_NUM_0);
 	xTaskCreate(i2c_task_1, "i2c_task_1", 1024 * 4, (void* ) port, 10, NULL);	//4kB stack size
 	vTaskDelete(NULL);
 }
@@ -2987,8 +2992,8 @@ void vApplicationIdleHook(void* arg){
 
 void idle_task_print(void* arg){
 	do{
-		//ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
-		//ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
+		ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
+		ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
 		core0_idle_time_last = core0_idle_time;
 		core1_idle_time_last = core1_idle_time;
 		vTaskDelay(10000 / portTICK_RATE_MS); // delay 10s
