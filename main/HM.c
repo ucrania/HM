@@ -945,8 +945,12 @@ void intr_init(){
 	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);		//install gpio isr service
 	rtc_gpio_pullup_en(INT_PIN_0);
 	rtc_gpio_pullup_en(INT_PIN_1);
+#ifdef EN_SENSOR0
 	gpio_isr_handler_add(INT_PIN_0, gpio_isr_handler, (void*) INT_PIN_0);	//hook isr handler for specific gpio pin
+#endif
+#ifdef EN_SENSOR1
 	gpio_isr_handler_add(INT_PIN_1, gpio_isr_handler, (void*) INT_PIN_1);	//hook isr handler for specific gpio pin
+#endif
 #ifdef EN_BATTERY_MEASURMENT_TASK
 	gpio_set_intr_type(INT_PIN_2, GPIO_INTR_ANYEDGE);	//interrupt on falling edge
 	gpio_isr_handler_add(INT_PIN_2, gpio_isr_handler, (void*) INT_PIN_2);	//hook isr handler for specific gpio pin
