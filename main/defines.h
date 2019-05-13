@@ -117,8 +117,8 @@
 #define LED1_CURRENT 			7				 //Red led current 0-50mA 0.2mA resolution
 #define LED2_CURRENT 			LED1_CURRENT	 //IR  led current 0-50mA 0.2mA resolution
 
-#define INT_PIN_0     			34				 //RTC GPIO used for interruptions
-#define INT_PIN_1     			35				 //RTC GPIO used for interruptions
+#define INT_PIN_0     			34				 //RTC GPIO used for interruptions Sensor 0
+#define INT_PIN_1     			35				 //RTC GPIO used for interruptions Sensor 1
 #define INT_PIN_2     			37				 //RTC GPIO used for interruption when usb is connected
 #define INT_PIN_3     			0				 //RTC GPIO used for button (sleep or wake up esp32)
 #define GPIO_INPUT_PIN_SEL  ((1ULL<<INT_PIN_0) | (1ULL<<INT_PIN_1) | (1ULL<<INT_PIN_2) | (1ULL<<INT_PIN_3))
@@ -294,6 +294,7 @@ void idle_task_print(void* arg);
 void vApplicationIdleHook(void* arg);
 void idle_task_0(void* arg);
 void idle_task_1(void* arg);
+void check_int_pin_task(void* arg);
 
 static double core0_idle_time = 0,core0_idle_time_last = 0;
 static double core1_idle_time = 0,core1_idle_time_last = 0;

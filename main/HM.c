@@ -39,11 +39,12 @@
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
 #define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
 #define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
+#define EN_CHECK_INT_PIN_TASK	//enable the task that runs every 5
 
 #define EN_BLE_TASK					//enable bluetooth
-#define EN_BLE_BOND_TASK			//enable bond in bluetooth
+//#define EN_BLE_BOND_TASK			//enable bond in bluetooth
 #define EN_NOTIFY					//enable notify task
-#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
+//#define EN_BATTERY_MEASURMENT_TASK	//enable the battery measurment value
 //#define EN_CHECK_BAT_PRESENCE		//enable battery presence check, (getting wrong values)
 //#define EN_SLEEP_BUTTON				//enable GPIO0 sleep button (makes esp sleep or wake up)
 #define PLOT 						//disables other printf
@@ -65,8 +66,11 @@ static bool battery_status_changed=true;
 static int buffer_pos_s0=-1,buffer_pos_s1=-1;
 static bool standby_state = false;
 
-TaskHandle_t notify_TaskHandle = NULL;
-TaskHandle_t battery_TaskHandle = NULL;
+TaskHandle_t notify_TaskHandler  	= NULL;
+TaskHandle_t battery_TaskHandler 	= NULL;
+TaskHandle_t int_check_TaskHandler0	= NULL;
+TaskHandle_t int_check_TaskHandler1	= NULL;
+
 
 /*********************BLE DEFINES**************************************************************************************/
 #include "ble_defines.h"
@@ -226,9 +230,9 @@ static void adc_init(){
 }
 
 static void IRAM_ATTR gpio_isr_handler(void* arg){
-	uint32_t gpio_num = (uint32_t) arg;
+	uint8_t gpio_num = (uint8_t) arg;
 	//printf("INTERRUPTION on pin %d",(int)arg);
-	switch ((uint32_t)arg) {
+	switch (gpio_num) {
 	case INT_PIN_0:
 	case INT_PIN_1:
 		xTaskCreate(sensor_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 10, NULL);
@@ -265,6 +269,8 @@ void app_main()
 	esp_register_freertos_idle_hook_for_cpu(idle_task_1,1);
 	xTaskCreate(idle_task_print, "idle_task_print", 1024 * 2, (void* ) 0, 10, NULL);
 #endif
+
+	// Create pointer for dinamir memory allocation for data from sensors
 	raw_ptr0_IR = malloc(FIFO_A_FULL);
 	raw_ptr0_RED =malloc(FIFO_A_FULL);
 	raw_ptr1_IR = malloc(FIFO_A_FULL);
@@ -286,10 +292,11 @@ void app_main()
 	return;*/
 
 #ifdef EN_BATTERY_MEASURMENT_TASK
+	//initialize adc for battery state and battery level tasks
 	adc_init();
-	//initialize battery state and battery level task
 #endif
 
+	//Initialize and make blink test to check connection to sensors
 #ifdef EN_MAX30102_READING_TASK
 	printf("Start app_main\n");
 	intr_init();
@@ -300,6 +307,9 @@ void app_main()
 	max30102_blink(5, 200, port0);
 	sensor_detected[0] = max30102_shutdown(port0);
 	ESP_LOGW("\tSensor 0","%s",sensor_detected[0]==ESP_OK ? "Detected" : "NOT Detected");
+#ifdef EN_CHECK_INT_PIN_TASK
+//	xTaskCreate(check_int_pin_task, "check_int_pin0", 1024 * 2, (void* ) port0, 10, &int_check_TaskHandler0);
+#endif
 #endif
 #ifdef EN_SENSOR1
 	i2c_port_t port1 = I2C_NUM_1;
@@ -308,6 +318,9 @@ void app_main()
 	max30102_blink(5, 200, port1);
 	sensor_detected[1] = max30102_shutdown(port1);
 	ESP_LOGW("\tSensor 1","%s",sensor_detected[1]==ESP_OK ? "Detected" : "NOT Detected");
+#ifdef EN_CHECK_INT_PIN_TASK
+//	xTaskCreate(check_int_pin_task, "check_int_pin1", 1024 * 2, (void* ) port1, 10, &int_check_TaskHandler1);
+#endif
 #endif
 #endif
 
@@ -346,8 +359,8 @@ void i2c_task_0(void* arg)
 void i2c_task_1(void* arg)
 {
 
-	ESP_LOGW("Core"," %d",xPortGetCoreID());
-	double mean1, mean2;
+ESP_LOGW("Core"," %d",xPortGetCoreID());
+double mean1, mean2;
 #ifndef PLOT
 printf("Start i2c_task_1!\n");
 #endif
@@ -391,7 +404,7 @@ if (port == I2C_NUM_0){ //if sensor0
 	memcpy(raw_pptr_IR+(sizeof(RAWsensorDataIR)*(*buffer_pos)),RAWsensorDataIR,sizeof(RAWsensorDataIR));
 	memcpy(raw_pptr_RED+(sizeof(RAWsensorDataRED)*(*buffer_pos)),RAWsensorDataRED,sizeof(RAWsensorDataRED));
 }*/
-if (notify_TaskHandle != NULL){
+if (notify_TaskHandler != NULL){
 	*buffer_pos +=1;
 }else{
 	*buffer_pos = -1;
@@ -411,7 +424,7 @@ if(*buffer_pos > 0){//ignore 1st read
 		*buffer_pos = -1;
 		max30102_write_reg(REG_INTR_ENABLE_1,port, PROX_INT_EN);	//Enable proximity interruption
 	}
-	if(notify_TaskHandle != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
+	if(notify_TaskHandler != NULL && *buffer_pos >= PACKS_TO_SEND){//Packet size
 		float SPO2_value=0;
 
 		int32_t HR_value=0,data_len= (sizeof(RAW0_str)*(int)(*buffer_pos)/2); //data lenght
@@ -464,7 +477,7 @@ if(*buffer_pos > 0){//ignore 1st read
 		char7_RAW1_val.attr_len = sizeof(RAW0_str)*(int)(*buffer_pos);	//attribute lenght in bytes
 		char8_RAW2_val.attr_len = sizeof(RAW1_str)*(int)(*buffer_pos);
 		//esp_ble_gatt_set_local_mtu(sizeof(RAW1_str) *buffer_pos + 3);
-		vTaskResume(notify_TaskHandle);
+		vTaskResume(notify_TaskHandler);
 		*buffer_pos = 0;
 	}
 }else{
@@ -544,13 +557,13 @@ void batt_state_task(void* arg)
 
 	if(battery_status_changed){
 		uint_fast8_t profile = PROFILE_BATT_APP_ID, ch = 9; //profile and char id for bat_state char
-		if(gl_char[ch].is_notify && notify_TaskHandle != NULL){ //if char is notify and notify task was created
+		if(gl_char[ch].is_notify && notify_TaskHandler != NULL){ //if char is notify and notify task was created
 			esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[1],
 					gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 			battery_status_changed=false;
 #ifdef EN_BATTERY_MEASURMENT_TASK
 			if(!battery_task_running){
-				xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+				xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandler);
 			}else{
 				//notify batt_lvl
 			}
@@ -590,7 +603,7 @@ void batt_level_task(void* arg)
 		}
 
 		if(battery_lvl_changed){
-			if(gl_char[ch].is_notify && notify_TaskHandle != NULL){ //if char is notify and notify task was created
+			if(gl_char[ch].is_notify && notify_TaskHandler != NULL){ //if char is notify and notify task was created
 				esp_ble_gatts_send_indicate(gl_profile_tab[profile].gatts_if, 0, gl_profile_tab[profile].char_handle[0],
 						gl_char[ch].char_val->attr_len,gl_char[ch].char_val->attr_value , false);
 			}
@@ -601,14 +614,14 @@ void batt_level_task(void* arg)
 			vTaskDelay(20*1000 / portTICK_RATE_MS);
 		}else{
 			battery_task_running = false;
-			vTaskDelete(battery_TaskHandle);
-			battery_TaskHandle = NULL;
+			vTaskDelete(battery_TaskHandler);
+			battery_TaskHandler = NULL;
 		}
 
 	}while(1);
 	battery_task_running = false;
-	vTaskDelete(battery_TaskHandle);
-	battery_TaskHandle = NULL;
+	vTaskDelete(battery_TaskHandler);
+	battery_TaskHandler = NULL;
 }
 
 void standby_task(void* arg){
@@ -1065,7 +1078,7 @@ void notify_task_optimized( void* arg) {
 
 		printf("Have %d chars to notify\n",n_notify);
 		//vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
-		vTaskSuspend(notify_TaskHandle);
+		vTaskSuspend(notify_TaskHandler);
 	}while(n_notify>0);//there is any char to notify
 	notify_task_running = false;
 	vTaskDelete(NULL);
@@ -1830,21 +1843,32 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[1].is_notify = true;	//notify flag
 #ifdef EN_MAX30102_READING_TASK
 uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
+i2c_port_t port;
 #ifdef EN_SENSOR0
+		port = I2C_NUM_0;
 		max30102_read_fifo(I2C_NUM_0, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
 		if(sensor_detected[0]==ESP_OK)
 		sensor_detected[0]=max30102_init(I2C_NUM_0);	//start sensors
+#ifdef EN_CHECK_INT_PIN_TASK
+		if(int_check_TaskHandler0 == NULL)
+	xTaskCreate(check_int_pin_task, "check_int_pin0", 1024 * 2, (void* ) port, 10, &int_check_TaskHandler0);
+#endif
 #endif
 #ifdef EN_SENSOR1
+		port = I2C_NUM_1;
 		max30102_read_fifo(I2C_NUM_1, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
 		if(sensor_detected[1]==ESP_OK)
-		sensor_detected[1]=max30102_init(I2C_NUM_1);
+		sensor_detected[1]=max30102_init(port);
+#ifdef EN_CHECK_INT_PIN_TASK
+		if(int_check_TaskHandler1 == NULL)
+	xTaskCreate(check_int_pin_task, "check_int_pin1", 1024 * 2, (void* ) port, 10, &int_check_TaskHandler1);
+#endif
 #endif
 #endif
 
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 						}
 #endif
 						esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle[0],
@@ -1971,10 +1995,18 @@ uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
 				gl_char[i].char_val->attr_value[2]=0;
 			}
 		}
+		if(int_check_TaskHandler0 != NULL){
+			vTaskDelete(int_check_TaskHandler0);
+			int_check_TaskHandler0 = NULL;
+		}
+		if(int_check_TaskHandler1 != NULL){
+			vTaskDelete(int_check_TaskHandler1);
+			int_check_TaskHandler1 = NULL;
+		}
 		if(battery_task_running){
 			battery_task_running = false;
-			vTaskDelete(battery_TaskHandle);
-			battery_TaskHandle = NULL;
+			vTaskDelete(battery_TaskHandler);
+			battery_TaskHandler = NULL;
 		}
 		BAT_lvl_str[0] = 200;
 		//battery_lvl_changed=true;
@@ -2059,7 +2091,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[2].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2214,7 +2246,7 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[4].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2373,7 +2405,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[5].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2533,7 +2565,7 @@ static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						}
 #ifdef EN_NOTIFY
 if (!notify_task_running){
-	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 }
 #endif
 					}
@@ -2703,7 +2735,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 							ESP_LOGW("Notify","BAT_LVL");
 #ifdef EN_BATTERY_MEASURMENT_TASK
 							if(!battery_task_running){
-								xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandle);
+								xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandler);
 							}
 #endif
 						}else{
@@ -2713,7 +2745,7 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandle);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
 						}
 #else
 						ESP_LOGI(GATTS_TAG, "notify not defined ");
@@ -2739,8 +2771,8 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[8].is_notify = false;
 						if(battery_task_running){
 							battery_task_running = false;
-							vTaskDelete(battery_TaskHandle);
-							battery_TaskHandle = NULL;
+							vTaskDelete(battery_TaskHandler);
+							battery_TaskHandler = NULL;
 						}
 					}else {
 						gl_char[9].is_notify = false;
@@ -2882,7 +2914,7 @@ void bt_main(){
 		ret = nvs_flash_init();
 	}
 	ESP_ERROR_CHECK( ret );
-	//ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+	ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
 	esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
 	ret = esp_bt_controller_init(&bt_cfg);
@@ -2985,6 +3017,39 @@ void max30102_blink(int n_times, int period, i2c_port_t port){
 	}
 }
 
+void check_int_pin_task(void* arg){
+	// This task is created to check if the last interruption was caught and clear it.
+
+	uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
+
+	i2c_port_t port = (i2c_port_t) arg;
+	uint_fast8_t int_pin = 0;
+	if (port == I2C_NUM_0){
+		int_pin = INT_PIN_0;
+	}else if(port == I2C_NUM_1){
+		int_pin = INT_PIN_1;
+	}
+	i2c_init(port);
+	bool int_on0 = false, int_on1 = false;
+	uint8_t int_state;
+	do{
+		vTaskDelay(5000 / portTICK_RATE_MS); // delay 5s
+		int_on0 = !gpio_get_level(int_pin);
+		vTaskDelay(250 / portTICK_RATE_MS); // delay 250ms
+		int_on1 = !gpio_get_level(int_pin);
+		if(int_on0 && int_on1){
+			//max30102_read_reg(REG_INTR_STATUS_1,port,&int_state); //clear interruption in the sensor
+			max30102_read_fifo(I2C_NUM_0, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
+			ESP_LOGW("INT_Check","int0:%d ,int1: %d",int_on0,int_on1);
+			ESP_LOGW("INT_Check","pin %i cleared",int_pin);
+		}else{
+			//
+		}
+	}while(1);
+
+
+}
+
 void vApplicationIdleHook(void* arg){
 	//core0_idle_time++;
 	//core1_idle_time++;
@@ -2992,8 +3057,8 @@ void vApplicationIdleHook(void* arg){
 
 void idle_task_print(void* arg){
 	do{
-		ESP_LOGW("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
-		ESP_LOGW("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
+		ESP_LOGI("IDLE","CPU0: %.0f,\t%.0f",core0_idle_time,core0_idle_time-core0_idle_time_last);
+		ESP_LOGI("IDLE","CPU1: %.0f,\t%.0f",core1_idle_time,core1_idle_time-core1_idle_time_last);
 		core0_idle_time_last = core0_idle_time;
 		core1_idle_time_last = core1_idle_time;
 		vTaskDelay(10000 / portTICK_RATE_MS); // delay 10s
