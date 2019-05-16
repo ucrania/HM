@@ -39,7 +39,7 @@
 #define EN_MAX30102_READING_TASK	//enable i2c sensor readings
 #define EN_SENSOR0		//enable i2c sensor0	SDA=25	SCL=26	INT=34
 #define EN_SENSOR1		//enable i2c sensor1	SDA=18 	SCL=19	INT=35
-#define EN_CHECK_INT_PIN_TASK	//enable the task that runs every 5
+//#define EN_CHECK_INT_PIN_TASK	10000//enable the task that runs every 5
 
 #define EN_BLE_TASK					//enable bluetooth
 //#define EN_BLE_BOND_TASK			//enable bond in bluetooth
@@ -252,21 +252,11 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 
 void app_main()
 {
-	int min_cpu_freq = 26, max_cpu_freq = 160;//160MHz is optimal tradeoff freq/power
 
-	esp_pm_config_esp32_t pm_config = {
-	            .max_cpu_freq = max_cpu_freq,
-				.max_freq_mhz = max_cpu_freq,
-	            .min_cpu_freq = 80,
-				.min_freq_mhz = min_cpu_freq,
-				.light_sleep_enable = false
-	    };
-
-	ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
 #if  defined(CONFIG_FREERTOS_LEGACY_HOOKS) & defined(CONFIG_FREERTOS_LEGACY_IDLE_HOOK)
 	//define idle task hooks
 	esp_register_freertos_idle_hook_for_cpu(idle_task_0,0);
-	esp_register_freertos_idle_hook_for_cpu(idle_task_1,1);
+	esp_register_freertos_idle_hook_for_cpu(idle_tprintf(ask_1,1);
 	xTaskCreate(idle_task_print, "idle_task_print", 1024 * 2, (void* ) 0, 10, NULL);
 #endif
 
@@ -326,6 +316,7 @@ void app_main()
 
 #ifdef EN_BLE_TASK
 	bt_main();
+	ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
 #ifndef CONFIG_BT_ENABLED
 	esp_light_sleep_start();
 #endif //CONFIG_BT_ENABLED
@@ -1026,7 +1017,7 @@ void notify_task_optimized( void* arg) {
 					case -1:
 						if(gl_char[ch].char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_RAW){ //if raw characteristic
 							if(!sensor_have_finger[j]){ //if not detecting finger, do not notify
-								printf("No finger on sensor %d\n",j);
+								ESP_LOGI("Sensor","No finger on sensor %d\n",j);
 								//continue; //do not notify
 								//notify if 1st time
 							}else{
@@ -1080,7 +1071,7 @@ void notify_task_optimized( void* arg) {
 			}
 		}
 
-		printf("Have %d chars to notify\n",n_notify);
+		ESP_LOGI("notify","Have %d chars to notify\n",n_notify);
 		//vTaskDelay(2500 / portTICK_RATE_MS); // delay 1s
 		vTaskSuspend(notify_TaskHandler);
 	}while(n_notify>0);//there is any char to notify
@@ -3023,7 +3014,7 @@ void max30102_blink(int n_times, int period, i2c_port_t port){
 
 void check_int_pin_task(void* arg){
 	// This task is created to check if the last interruption was caught and clear it.
-
+#ifdef EN_CHECK_INT_PIN_TASK
 	uint16_t RAWsensorDataRED[FIFO_A_FULL/2], RAWsensorDataIR[FIFO_A_FULL/2];
 
 	i2c_port_t port = (i2c_port_t) arg;
@@ -3037,20 +3028,20 @@ void check_int_pin_task(void* arg){
 	bool int_on0 = false, int_on1 = false;
 	uint8_t int_state;
 	do{
-		vTaskDelay(5000 / portTICK_RATE_MS); // delay 5s
+		vTaskDelay(EN_CHECK_INT_PIN_TASK / portTICK_RATE_MS); // delay 5s
 		int_on0 = !gpio_get_level(int_pin);
 		vTaskDelay(250 / portTICK_RATE_MS); // delay 250ms
 		int_on1 = !gpio_get_level(int_pin);
+			ESP_LOGW("INT_Check","int0:%d ,int1: %d",int_on0,int_on1);
 		if(int_on0 && int_on1){
 			//max30102_read_reg(REG_INTR_STATUS_1,port,&int_state); //clear interruption in the sensor
 			max30102_read_fifo(I2C_NUM_0, RAWsensorDataRED,RAWsensorDataIR);//clean fifo
-			ESP_LOGW("INT_Check","int0:%d ,int1: %d",int_on0,int_on1);
 			ESP_LOGW("INT_Check","pin %i cleared",int_pin);
 		}else{
 			//
 		}
 	}while(1);
-
+#endif
 
 }
 

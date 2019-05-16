@@ -114,7 +114,7 @@
 #define FIFO_A_FULL 			30				 //Options: 17 - 32			default:17
 #define FIFO_ROLLOVER_EN 		1				 //Override data in fifo after it is full
 
-#define LED1_CURRENT 			7				 //Red led current 0-50mA 0.2mA resolution
+#define LED1_CURRENT 			8				 //Red led current 0-50mA 0.2mA resolution
 #define LED2_CURRENT 			LED1_CURRENT	 //IR  led current 0-50mA 0.2mA resolution
 
 #define INT_PIN_0     			34				 //RTC GPIO used for interruptions Sensor 0
@@ -298,5 +298,21 @@ void check_int_pin_task(void* arg);
 
 static double core0_idle_time = 0,core0_idle_time_last = 0;
 static double core1_idle_time = 0,core1_idle_time_last = 0;
+
+
+#define MAX_CPU_FREQ 160
+#define MIN_CPU_FREQ 26
+//const int min_cpu_freq = 26, max_cpu_freq = 160;//160MHz is optimal tradeoff freq/power
+
+static esp_pm_config_esp32_t pm_config = {
+            .max_cpu_freq = MAX_CPU_FREQ,
+			.max_freq_mhz = MAX_CPU_FREQ,
+            .min_cpu_freq = 80,
+			.min_freq_mhz = MIN_CPU_FREQ,
+			.light_sleep_enable = false
+};
+
+
+
 
 #endif /* MAIN_DEFINES_H_ */
