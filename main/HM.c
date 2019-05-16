@@ -56,7 +56,7 @@
 
 #include "defines.h"
 #include "algorithm_IK_C.h"
-#define TRESHOLD_ON 15000
+#define TRESHOLD_ON 20000
 
 static esp_err_t sensor_detected[2] = {ESP_FAIL,ESP_FAIL}; //initialise as not detected
 static uint16_t RAW0_str[FIFO_A_FULL/2],RAW1_str[FIFO_A_FULL/2];				//RAW1,RAW2
