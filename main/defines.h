@@ -48,6 +48,14 @@
 #define PACKS_TO_SEND 6	//max17 //packs of data to send in ble (FIFO_A_FULL*PACKS_TO SEND)
 #define GATT_MAX_APPS 16//todo ver se faz algo: nao faz nada
 
+//define priorities for tasks - lower number = lower priority - (0 = idle)
+
+#define PRIORITY_BATTERY_TASK	8
+#define PRIORITY_CHECK_INT_TASK 8
+#define PRIORITY_NOTIFY_TASK	11
+#define PRIORITY_I2C_TASK 		12
+
+
 #define REG_INTR_STATUS_1 0x00
 #define REG_INTR_STATUS_2 0x01
 #define REG_INTR_ENABLE_1 0x02

@@ -56,7 +56,7 @@
 
 #include "defines.h"
 #include "algorithm_IK_C.h"
-#define TRESHOLD_ON 20000
+#define THRESHOLD_ON 20000
 
 static esp_err_t sensor_detected[2] = {ESP_FAIL,ESP_FAIL}; //initialise as not detected
 static uint16_t RAW0_str[FIFO_A_FULL/2],RAW1_str[FIFO_A_FULL/2];				//RAW1,RAW2
@@ -235,15 +235,15 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 	switch (gpio_num) {
 	case INT_PIN_0:
 	case INT_PIN_1:
-		xTaskCreate(sensor_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 10, NULL);
+		xTaskCreate(sensor_task_manager, "isr_task_manager", 1024 * 4, (void* ) arg, 11, NULL);
 		break;
 	case INT_PIN_2:
-		xTaskCreate(batt_state_task,"batt_task",	1024*4, (void*) arg, 10 , NULL);
+		xTaskCreate(batt_state_task,"batt_task",	1024*4, (void*) arg, PRIORITY_BATTERY_TASK , NULL);
 		break;
 	case INT_PIN_3:
 		gpio_set_intr_type(INT_PIN_3, GPIO_INTR_DISABLE);
 		gpio_set_level(5,!gpio_get_level(5));
-		xTaskCreate(standby_task,"standby_task",	1024*4, (void*) arg, 10, NULL);
+		xTaskCreate(standby_task,"standby_task",	1024*4, (void*) arg, 9, NULL);
 		break;
 	default:
 		break;
@@ -406,7 +406,7 @@ if(*buffer_pos > 0){//ignore 1st read
 	data_mean(RAWsensorDataRED,RAWsensorDataIR,&mean1,&mean2);
 	printf("Mean:\t%f,\t%f\n",mean1,mean2);
 	//fprintf(stdout,"\tSPO2: %02f%%\n\n",SPO2);
-	if(mean1<TRESHOLD_ON && mean2<TRESHOLD_ON){	//IF NO FINGER
+	if(mean1<THRESHOLD_ON && mean2<THRESHOLD_ON){	//IF NO FINGER
 		if (port == I2C_NUM_0){
 			sensor_have_finger[0] = false;
 		}else {
@@ -524,7 +524,7 @@ void sensor_task_manager(void* arg)
 
 	//xTaskCreate(i2c_task_0, "i2c_test_task_0", 1024 * 4, (void* ) 0, 10, NULL);
 	//xTaskCreatePinnedToCore(i2c_task_1,"i2c_task_1",1024*4, (void*) port, 10,NULL,port == I2C_NUM_0);
-	xTaskCreate(i2c_task_1, "i2c_task_1", 1024 * 4, (void* ) port, 10, NULL);	//4kB stack size
+	xTaskCreate(i2c_task_1, "i2c_task_1", 1024 * 4, (void* ) port, PRIORITY_I2C_TASK, NULL);	//4kB stack size
 	vTaskDelete(NULL);
 }
 
@@ -554,7 +554,7 @@ void batt_state_task(void* arg)
 			battery_status_changed=false;
 #ifdef EN_BATTERY_MEASURMENT_TASK
 			if(!battery_task_running){
-				xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandler);
+				xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, PRIORITY_BATTERY_TASK, &battery_TaskHandler);
 			}else{
 				//notify batt_lvl
 			}
@@ -1846,7 +1846,7 @@ i2c_port_t port;
 		sensor_detected[0]=max30102_init(I2C_NUM_0);	//start sensors
 #ifdef EN_CHECK_INT_PIN_TASK
 		if(int_check_TaskHandler0 == NULL)
-	xTaskCreate(check_int_pin_task, "check_int_pin0", 1024 * 2, (void* ) port, 10, &int_check_TaskHandler0);
+	xTaskCreate(check_int_pin_task, "check_int_pin0", 1024 * 2, (void* ) port, PRIORITY_CHECK_INT_TASK, &int_check_TaskHandler0);
 #endif
 #endif
 #ifdef EN_SENSOR1
@@ -1856,14 +1856,14 @@ i2c_port_t port;
 		sensor_detected[1]=max30102_init(port);
 #ifdef EN_CHECK_INT_PIN_TASK
 		if(int_check_TaskHandler1 == NULL)
-	xTaskCreate(check_int_pin_task, "check_int_pin1", 1024 * 2, (void* ) port, 10, &int_check_TaskHandler1);
+	xTaskCreate(check_int_pin_task, "check_int_pin1", 1024 * 2, (void* ) port, PRIORITY_CHECK_INT_TASK, &int_check_TaskHandler1);
 #endif
 #endif
 #endif
 
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 						}
 #endif
 						esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[profile].char_handle[0],
@@ -2086,7 +2086,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[2].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2241,7 +2241,7 @@ static void gatts_profile_c_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[4].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2400,7 +2400,7 @@ static void gatts_profile_d_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						gl_char[5].is_notify = true;
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 						}
 #endif
 					}
@@ -2560,7 +2560,7 @@ static void gatts_profile_e_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 						}
 #ifdef EN_NOTIFY
 if (!notify_task_running){
-	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+	xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 }
 #endif
 					}
@@ -2730,17 +2730,17 @@ static void gatts_profile_f_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 							ESP_LOGW("Notify","BAT_LVL");
 #ifdef EN_BATTERY_MEASURMENT_TASK
 							if(!battery_task_running){
-								xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, 10, &battery_TaskHandler);
+								xTaskCreate(batt_level_task, "batt_level_task", 1024 * 2, (void*) 0, PRIORITY_BATTERY_TASK, &battery_TaskHandler);
 							}
 #endif
 						}else{
 							gl_char[9].is_notify = true;	//notify bat state
 							ESP_LOGW("Notify","BAT_STATE");
-							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 2, (void* ) 0, 10, NULL);
+							xTaskCreate(batt_state_task, "i2c_test_task_0", 1024 * 2, (void* ) 0, PRIORITY_BATTERY_TASK, NULL);
 						}
 #ifdef EN_NOTIFY
 						if (!notify_task_running){
-							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, 10, &notify_TaskHandler);
+							xTaskCreate(notify_task_optimized, "notify_task_optimized", 1024 * 4, (void*) 0, PRIORITY_NOTIFY_TASK, &notify_TaskHandler);
 						}
 #else
 						ESP_LOGI(GATTS_TAG, "notify not defined ");
